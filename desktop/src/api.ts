@@ -7,18 +7,28 @@ export const web =
   document.querySelector('meta[name="keeper-agent-mode"]')?.getAttribute('content') === 'web';
 export const preview = !native && !web && import.meta.env.DEV;
 let csrf = '';
+const proofKey = 'keeper-agent-session-proof';
 export async function webSession(key?: string): Promise<boolean> {
+  if (key === undefined) {
+    csrf = sessionStorage.getItem(proofKey) || '';
+    if (!csrf) return false;
+  }
   const response = await fetch(key === undefined ? '/admin/session' : '/admin/login', {
     method: key === undefined ? 'GET' : 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
-    headers: key === undefined ? {} : { 'Content-Type': 'application/json' },
+    headers: key === undefined ? { 'X-CSRF-Token': csrf } : { 'Content-Type': 'application/json' },
     body: key === undefined ? undefined : JSON.stringify({ key }),
   });
-  if (key === undefined && response.status === 401) return false;
+  if (key === undefined && [401, 403].includes(response.status)) {
+    sessionStorage.removeItem(proofKey);
+    csrf = '';
+    return false;
+  }
   const value = await response.json();
   if (!response.ok) throw new Error(value.error || 'Sign-in failed');
   csrf = value.csrf;
+  sessionStorage.setItem(proofKey, csrf);
   return true;
 }
 async function webFetch(path: string, payload: Record<string, unknown>) {
@@ -31,6 +41,7 @@ async function webFetch(path: string, payload: Record<string, unknown>) {
   });
   if (response.status === 401) {
     csrf = '';
+    sessionStorage.removeItem(proofKey);
     window.dispatchEvent(new Event('keeper-agent:locked'));
   }
   if (!response.ok) {
@@ -42,6 +53,7 @@ async function webFetch(path: string, payload: Record<string, unknown>) {
 export async function logout() {
   await webFetch('/admin/logout', {});
   csrf = '';
+  sessionStorage.removeItem(proofKey);
   window.dispatchEvent(new Event('keeper-agent:locked'));
 }
 export async function downloadClient(name: string) {

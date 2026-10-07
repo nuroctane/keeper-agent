@@ -38,6 +38,10 @@ try:
         response = client.post('/admin/login', json={'key':key})
         assert response.status_code == 200
         client.headers['X-CSRF-Token'] = response.json()['csrf']
+        assert client.get('/admin/session').status_code == 200
+        proof = client.headers.pop('X-CSRF-Token')
+        assert client.get('/admin/session').status_code == 403
+        client.headers['X-CSRF-Token'] = proof
         response = client.post('/admin/request', json={'operation':'snapshot'})
         assert response.status_code == 200 and not response.json()['initialized']
         assert client.post('/admin/logout', json={}).status_code == 200

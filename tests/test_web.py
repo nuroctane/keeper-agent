@@ -103,6 +103,15 @@ def test_logout_and_expiry_revoke_session(web, monkeypatch):
     assert op(client, 'snapshot').status_code == 401
 
 
+def test_cookie_alone_cannot_recover_session_proof(web):
+    _, client = web
+    login(client)
+    assert client.get('/admin/session').status_code == 200
+    del client.headers['X-CSRF-Token']
+    assert client.get('/admin/session').status_code == 403
+    assert op(client, 'snapshot').status_code == 403
+
+
 def test_login_throttle_and_secure_cookie(web):
     admin, client = web
     for _ in range(10):

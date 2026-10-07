@@ -288,7 +288,9 @@ def handler_for(admin):
                 self.valid_origin()
                 path = urlsplit(self.path).path
                 if path == "/admin/session":
-                    _, csrf = admin.authenticate(self.headers)
+                    # Cookies are shared across ports on a host. A tab-scoped proof
+                    # keeps a cookie captured by another localhost app insufficient.
+                    _, csrf = admin.authenticate(self.headers, mutation=True)
                     self.reply(200, {"csrf": csrf})
                     return
                 if path != "/" and not path.startswith("/assets/"):

@@ -61,7 +61,7 @@ Use a certificate your browser already trusts and a hostname you control. Remote
 
 ## Session and request protection
 
-Administrator sessions are random, stored in server memory, and carried in HttpOnly, host-only, SameSite=Strict cookies. HTTPS adds Secure. Sessions expire after 30 minutes of inactivity or eight hours total and disappear on restart/sign-out. Tokens are not placed in URLs or localStorage. The only localStorage setting is appearance.
+Administrator sessions are random, stored in server memory, and carried in HttpOnly, host-only, SameSite=Strict cookies. HTTPS adds Secure. Sessions expire after 30 minutes of inactivity or eight hours total and disappear on restart/sign-out. Tokens are not placed in URLs or localStorage. The only localStorage setting is appearance. The separate request proof is kept in the tab's sessionStorage and is required even to resume a session after reload. A newly opened tab needs sign-in. This matters on localhost: cookies span ports, while sessionStorage is isolated to the exact origin; a cookie received by another localhost service alone cannot authorize administrator requests or retrieve the proof.
 
 Each API mutation requires an authenticated session, a per-session CSRF header, the exact configured Origin and Host, and a same-origin Fetch Metadata context when provided. Cross-origin preflights are refused. Responses disable caching, framing, cross-origin reading, and referrer disclosure. Request sizes, socket timeouts, simultaneous connections, login attempts, and live sessions are bounded.
 
