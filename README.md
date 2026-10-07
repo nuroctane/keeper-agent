@@ -13,6 +13,8 @@ Agent CLI → local HTTPS + scoped client token → private broker → Keeper Co
 
 ## What is implemented
 
+- Native desktop administrator for Windows and macOS: dark charcoal/gold interface, action editing, agent grants, activity, private login terminal, and browser setup. See [desktop setup and architecture](docs/DESKTOP.md). Windows validation and macOS limitations are in [VALIDATION.md](VALIDATION.md).
+
 - API requests: fixed HTTPS destination/method/headers/body; redirects refused; select specific JSON fields to return. Status only by default.
 - Commands: fixed executable, arguments, working directory, and environment; no shell interpolation; output suppressed by default. Optional bounded, redacted text output.
 - Browser workflows: navigate, fill, click, wait, and extract selected visible text; exact origin allowlist; service workers and WebSockets disabled; isolated context closed after each action. No cookie exports, screenshots, downloads, CDP endpoints, or arbitrary agent JavaScript.

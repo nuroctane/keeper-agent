@@ -12,8 +12,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
-import httpx
-
 from .policy import NAME, validate
 from .security import Denied, read_json, token_hash, write_private
 
@@ -101,6 +99,8 @@ def add_client(state, name, actions, out):
 
 
 def call_client(path, body):
+    # Metadata-only desktop requests do not need to load the HTTP stack.
+    import httpx
     config = read_json(path)
     url = urlsplit(config["url"])
     if url.scheme != "https" or url.hostname != "127.0.0.1" or url.path != "/v1" or url.username or url.query or url.fragment:

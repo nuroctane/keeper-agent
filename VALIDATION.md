@@ -1,5 +1,18 @@
 # Validation — October 6, 2026
 
+## Desktop update — October 7, 2026
+
+- 34 backend tests passed, including real Chromium with synthetic credentials and the desktop's full action-run path through pinned local TLS. Temporary client cleanup, interruption-safe expiry, metadata filtering, CRUD, and grants/revocation were covered.
+- Five Playwright interface tests passed: empty setup, search and run confirmation/results, action creation and scoped grants/revocation, keyboard/theme/minimum-width behavior, and screenshot generation. These use browser preview fixtures, not the native bridge.
+- Svelte/TypeScript diagnostics: zero errors and warnings. Production frontend: 85.83 kB JavaScript (31.54 kB gzip), 24.77 kB CSS (5.73 kB gzip), plus a small dynamic import.
+- Frozen Python helper passed synthetic initialization, action editing, client creation/revocation, metadata non-disclosure, and CLI help. No installed Python is needed by that helper.
+- The final helper smoke test measured 1.043 seconds for its initial empty snapshot and 1.103 seconds for a subsequent initialized snapshot. These are individual subprocess measurements on this host during build activity, not cross-platform performance benchmarks.
+- The Windows native process launched, remained responsive, and closed cleanly in a smoke test. Full native interaction still needs manual validation.
+- The UI does not poll while idle. Its 3.2 MiB native executable uses the platform webview. The Python helper/resources occupy about 204 MiB before installer compression; browser binaries are an optional separate download. Frontend size is not total installed size or a RAM benchmark.
+- Native UI interactions, real Keeper authentication, and target-site workflows have not been end-to-end automated. Cross-platform CI is available as a manual workflow. Platform build/runtime observations below should not be interpreted as an independent security audit.
+
+The original CLI validation follows.
+
 Built and tested on Windows with Python 3.12.
 
 - **20 tests passed**, including the opt-in real Chromium test, in 9.43 seconds.

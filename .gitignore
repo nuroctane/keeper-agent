@@ -15,3 +15,11 @@ audit.jsonl
 .env
 .env.*
 !.env.example
+node_modules/
+target/
+dist/
+desktop/src-tauri/gen/
+desktop/src-tauri/binaries/
+desktop/test-results/
+desktop/playwright-report/
+broker-status.json

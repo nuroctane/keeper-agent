@@ -25,6 +25,9 @@ class Broker:
         clients = read_json(self.state / "clients.json")
         for name, client in clients.items():
             if hmac.compare_digest(client["sha256"], digest):
+                default_expiry = 0 if name.startswith("desktop-run-") else float("inf")
+                if client.get("expiresAt", default_expiry) <= time.time():
+                    raise Denied("Unauthorized")
                 return name, set(client["actions"])
         raise Denied("Unauthorized")
 
@@ -137,8 +140,13 @@ def serve(state, policy, provider):
     config = read_json(state / "server.json")
     broker = Broker(state, policy, provider)
     with LocalServer(config["port"], handler_for(broker), tls) as server:
+        from .desktop import policy_digest
+        from .cli import replace_private
+        status_path = state / "broker-status.json"
+        replace_private(status_path, {"policyDigest": policy_digest(policy)})
         print(f"Keeper Agent listening on https://127.0.0.1:{server.server_port}. Ctrl+C to lock.", flush=True)
         try:
             server.serve_forever()
         finally:
             provider.close()
+            status_path.unlink(missing_ok=True)
