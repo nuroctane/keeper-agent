@@ -60,7 +60,7 @@ Windows output is under `desktop/src-tauri/target/release/bundle/nsis/`. Keep th
 
 On a Mac, build the helper with `.venv/bin/python desktop/scripts/package_core.py`, then `npm run desktop:build -- --bundles app,dmg`. Build natively for the desired architecture so Python, its compiled dependencies, and Rust all match. A universal Rust executable alone does not make the Python helper universal.
 
-The manual GitHub Actions workflow builds Windows and the available macOS runner architecture, tests the frontend and backend, and uploads private CI artifacts. It does not publish a release or use your vault. macOS runtime behavior, signing, and notarization require validation on a Mac before distribution. Local Windows packages are unsigned development builds.
+The manual GitHub Actions workflow builds Windows and the available macOS runner architecture, tests the frontend and backend, smoke-tests the frozen helper, and uploads private CI artifacts. It does not publish a release or use your vault. The first verified macOS artifact targets Apple Silicon (ARM64). Interactive macOS behavior, signing, and notarization still need validation before distribution. Both packages are unsigned development builds. See [the build results](../VALIDATION.md) for measured sizes, tests, and limitations.
 
 References: [Tauri distribution](https://v2.tauri.app/distribute/), [resource embedding](https://v2.tauri.app/develop/resources/), and [Playwright browser installation](https://playwright.dev/python/docs/browsers).
 

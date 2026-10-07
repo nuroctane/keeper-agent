@@ -9,7 +9,9 @@
 - The final helper smoke test measured 1.043 seconds for its initial empty snapshot and 1.103 seconds for a subsequent initialized snapshot. These are individual subprocess measurements on this host during build activity, not cross-platform performance benchmarks.
 - The Windows native process launched, remained responsive, and closed cleanly in a smoke test. Full native interaction still needs manual validation.
 - The UI does not poll while idle. Its 3.2 MiB native executable uses the platform webview. The Python helper/resources occupy about 204 MiB before installer compression; browser binaries are an optional separate download. Frontend size is not total installed size or a RAM benchmark.
-- Native UI interactions, real Keeper authentication, and target-site workflows have not been end-to-end automated. Cross-platform CI is available as a manual workflow. Platform build/runtime observations below should not be interpreted as an independent security audit.
+- Windows x64: release compilation and NSIS packaging succeeded locally. The 67.36 MiB installer passed a 7-Zip integrity test, and the embedded helper matched the smoke-tested helper's SHA-256. Installer SHA-256: `F8F6DCC02CF2E25F345F81AE34841FF89A2301D6B1708FE7DB22640F6932A6A6`.
+- macOS ARM64: [CI run 37630393709](https://github.com/nuroctane/keeper-agent/actions/runs/37630393709) passed backend tests, interface tests, frozen-helper smoke tests, release compilation, and DMG packaging. The resulting Apple Silicon DMG is 98.11 MiB. Intel macOS has build instructions but was not built in this run.
+- Both platform packages are unsigned development builds; macOS notarization is not configured. Native UI interactions, real Keeper authentication, and target-site workflows have not been end-to-end automated. Platform build/runtime observations should not be interpreted as an independent security audit.
 
 The original CLI validation follows.
 
