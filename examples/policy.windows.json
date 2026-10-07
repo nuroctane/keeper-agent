@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "actions": {
+    "github-me": {
+      "kind": "http",
+      "description": "Read the GitHub identity associated with this token",
+      "url": "https://api.github.com/user",
+      "headers": {
+        "Authorization": "Bearer {{token}}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "keeper-agent-local"
+      },
+      "secrets": {
+        "token": {"record": "REPLACE_WITH_RECORD_UID", "field": "password"}
+      },
+      "outputs": {"login": "login", "id": "id"}
+    },
+    "github-repo-view": {
+      "kind": "command",
+      "description": "Read one fixed repository using GitHub CLI",
+      "argv": ["C:\\Program Files\\GitHub CLI\\gh.exe", "repo", "view", "OWNER/REPOSITORY", "--json", "name,url"],
+      "cwd": "C:\\ProgramData\\KeeperAgent\\trusted-work",
+      "env": {
+        "GH_TOKEN": "{{token}}",
+        "GH_CONFIG_DIR": "C:\\ProgramData\\KeeperAgent\\gh-config",
+        "GH_PROMPT_DISABLED": "1"
+      },
+      "secrets": {
+        "token": {"record": "REPLACE_WITH_RECORD_UID", "field": "password"}
+      },
+      "output": "text"
+    },
+    "website-account": {
+      "kind": "browser",
+      "description": "Sign in and read a configured account-status element",
+      "headless": false,
+      "timeout": 180,
+      "origins": ["https://app.example.com"],
+      "secrets": {
+        "username": {"record": "REPLACE_WITH_LOGIN_UID", "field": "login"},
+        "password": {"record": "REPLACE_WITH_LOGIN_UID", "field": "password"}
+      },
+      "steps": [
+        {"op": "goto", "url": "https://app.example.com/login"},
+        {"op": "fill", "selector": "input[name=email]", "value": "{{username}}"},
+        {"op": "fill", "selector": "input[name=password]", "value": "{{password}}"},
+        {"op": "click", "selector": "button[type=submit]"},
+        {"op": "wait", "selector": "[data-testid=account-status]"},
+        {"op": "text", "selector": "[data-testid=account-status]", "name": "status"}
+      ]
+    }
+  }
+}

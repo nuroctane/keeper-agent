@@ -1,0 +1,240 @@
+import base64
+import json
+import os
+import ssl
+import sys
+import threading
+from pathlib import Path
+
+import httpx
+import pytest
+
+from keeper_agent.cli import certificate, call_client
+from keeper_agent.engine import Engine, render
+from keeper_agent.policy import validate
+from keeper_agent.security import Denied, origin, scrub, token_hash, write_private
+from keeper_agent.server import Broker, LocalServer, handler_for
+
+
+SECRET = "fixture-secret-ONLY-123!"
+
+
+class FakeProvider:
+    def sync(self):
+        pass
+
+    def get(self, ref):
+        assert ref["record"] == "fixture"
+        return SECRET
+
+
+def command(tmp_path, code, output="text"):
+    return {"kind": "command", "argv": [sys.executable, "-c", code], "cwd": str(tmp_path),
+            "env": {"FIXTURE": "{{key}}"}, "output": output,
+            "secrets": {"key": {"record": "fixture", "field": "password"}}}
+
+
+def policy(action):
+    return validate({"version": 1, "actions": {"test": action}})
+
+
+def test_fixed_command_injection_and_redaction(tmp_path):
+    a = command(tmp_path, "import os,base64; s=os.environ['FIXTURE']; print(s); print(base64.b64encode(s.encode()).decode())")
+    result = Engine(policy(a), FakeProvider()).run("test")
+    assert result["exit_code"] == 0
+    assert SECRET not in result["output"]
+    assert result["output"].count("[REDACTED]") == 2
+
+
+def test_default_command_output_suppressed(tmp_path):
+    a = command(tmp_path, "import os; print(os.environ['FIXTURE'])", "none")
+    assert Engine(policy(a), FakeProvider()).run("test") == {"exit_code": 0}
+
+
+def test_parent_environment_not_forwarded(tmp_path, monkeypatch):
+    monkeypatch.setenv("BROKER_PRIVATE_KEY", "do-not-inherit")
+    a = command(tmp_path, "import os; print('BROKER_PRIVATE_KEY' in os.environ)")
+    assert "False" in Engine(policy(a), FakeProvider()).run("test")["output"]
+
+
+def test_command_timeout_and_limit(tmp_path):
+    a = command(tmp_path, "import time; time.sleep(5)")
+    a["timeout"] = 1
+    with pytest.raises(Denied, match="timed out"):
+        Engine(policy(a), FakeProvider()).run("test")
+    a = command(tmp_path, "print('a' * 300000)")
+    with pytest.raises(Denied, match="limits"):
+        Engine(policy(a), FakeProvider()).run("test")
+
+
+@pytest.mark.parametrize("url", ["http://example.com", "https://user:pass@example.com", "file:///etc/passwd", "https://example.com/#secret"])
+def test_reject_unsafe_urls(url):
+    with pytest.raises(Denied):
+        policy({"kind": "http", "url": url})
+
+
+def test_policy_rejects_args_secrets_and_shell_script(tmp_path):
+    a = command(tmp_path, "print(1)")
+    a["argv"].append("{{key}}")
+    with pytest.raises(Denied):
+        policy(a)
+    a["argv"] = [str(tmp_path / "evil.cmd")]
+    with pytest.raises(Denied):
+        policy(a)
+
+
+def test_unknown_keys_and_alias_fail_closed():
+    with pytest.raises(Denied):
+        policy({"kind": "http", "url": "https://example.com", "allow_redirects": True})
+    with pytest.raises(Denied):
+        render("{{not-granted}}", {})
+
+
+def test_http_redirect_never_followed(monkeypatch):
+    requests = []
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(302, headers={"location": "https://other.invalid"})
+    factory = httpx.Client
+    monkeypatch.setattr("keeper_agent.engine.httpx.Client", lambda **kw: factory(transport=httpx.MockTransport(respond), **kw))
+    a = {"kind": "http", "url": "https://example.com", "headers": {"Authorization": "Bearer {{key}}"},
+         "secrets": {"key": {"record": "fixture", "field": "password"}}}
+    with pytest.raises(Denied, match="redirect"):
+        Engine(policy(a), FakeProvider()).run("test")
+    assert len(requests) == 1
+    assert requests[0].headers["Authorization"] == f"Bearer {SECRET}"
+
+
+def test_http_projection_and_response_redaction(monkeypatch):
+    factory = httpx.Client
+    def respond(request):
+        return httpx.Response(200, json={"safe": {"name": "david", "echo": SECRET}, "unselected": "private"})
+    monkeypatch.setattr("keeper_agent.engine.httpx.Client", lambda **kw: factory(transport=httpx.MockTransport(respond), **kw))
+    a = {"kind": "http", "url": "https://example.com", "outputs": {"user": "safe.name", "echo": "safe.echo"},
+         "secrets": {"key": {"record": "fixture", "field": "password"}}}
+    result = Engine(policy(a), FakeProvider()).run("test")
+    assert result == {"status": 200, "data": {"user": "david", "echo": "[REDACTED]"}}
+
+
+def test_browser_origins_and_fill_policy():
+    a = {"kind": "browser", "origins": ["https://example.com"],
+         "steps": [{"op": "goto", "url": "https://evil.invalid"}]}
+    with pytest.raises(Denied):
+        policy(a)
+    a["steps"] = [{"op": "fill", "selector": "{{key}}", "value": "x"}]
+    with pytest.raises(Denied):
+        policy(a)
+
+
+def test_broker_errors_never_echo_provider_exception(tmp_path):
+    a = {"kind": "http", "url": "https://example.com", "secrets": {"key": {"record": "fixture", "field": "password"}}}
+    class Broken(FakeProvider):
+        def get(self, ref):
+            raise RuntimeError(SECRET)
+    broker = Broker(tmp_path, policy(a), Broken())
+    with pytest.raises(Denied) as error:
+        broker.invoke("agent", {"test"}, {"operation": "run", "action": "test"})
+    assert SECRET not in str(error.value)
+    audit = (tmp_path / "audit.jsonl").read_text()
+    assert SECRET not in audit
+    assert '"failed"' in audit
+
+
+def test_client_cannot_supply_args_or_access_ungranted_action(tmp_path):
+    broker = Broker(tmp_path, policy(command(tmp_path, "print(1)")), FakeProvider())
+    for body in [{"operation": "run", "action": "test", "argv": ["bad"]},
+                 {"operation": "run", "action": "other"}, {"operation": "get", "record": "fixture"}]:
+        with pytest.raises(Denied):
+            broker.invoke("agent", {"test"}, body)
+    assert broker.invoke("agent", set(), {"operation": "list"}) == {"actions": []}
+
+
+def test_real_tls_client_auth_run_and_revocation(tmp_path):
+    certificate(tmp_path)
+    token = "test-client-" + "x" * 48
+    write_private(tmp_path / "clients.json", {"agent": {"sha256": token_hash(token), "actions": ["test"]}})
+    broker = Broker(tmp_path, policy(command(tmp_path, "print('passed')")), FakeProvider())
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(tmp_path / "server.crt", tmp_path / "server.key")
+    server = LocalServer(0, handler_for(broker), tls)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    config = {"url": f"https://127.0.0.1:{server.server_port}/v1", "token": token,
+              "certificate": (tmp_path / "server.crt").read_text()}
+    path = tmp_path / "client.json"
+    write_private(path, config)
+    try:
+        assert call_client(path, {"operation": "list"})["actions"][0]["name"] == "test"
+        result = call_client(path, {"operation": "run", "action": "test"})
+        assert result["result"]["output"].strip() == "passed"
+        with httpx.Client(trust_env=False) as client:
+            with pytest.raises(httpx.ConnectError):
+                client.post(config["url"], json={"operation": "list"})
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.load_verify_locations(cadata=config["certificate"])
+        with httpx.Client(verify=context, trust_env=False) as client:
+            assert client.post(config["url"], json={"operation": "list"}).status_code == 401
+            assert client.post(config["url"], json={"operation": "list"},
+                               headers={"Authorization": f"Bearer {token}", "Origin": "https://evil.invalid"}).status_code == 403
+        (tmp_path / "clients.json").write_text("{}")
+        with pytest.raises(Denied, match="Unauthorized"):
+            call_client(path, {"operation": "list"})
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_personal_vault_legacy_and_typed_fields():
+    from keepercommander.params import KeeperParams
+    from keepercommander.vault import KeeperRecord, PasswordRecord, TypedRecord, TypedField, CustomField
+    from keeper_agent.provider import KeeperProvider
+    from unittest.mock import patch
+    provider = object.__new__(KeeperProvider)
+    provider.params = KeeperParams()
+    record = PasswordRecord()
+    record.password = SECRET
+    record.custom = [CustomField({"name": "api_key", "value": SECRET})]
+    with patch.object(KeeperRecord, "load", return_value=record):
+        assert provider.get({"record": "fixture", "field": "password"}) == SECRET
+        assert provider.get({"record": "fixture", "field": "custom:api_key"}) == SECRET
+    typed = TypedRecord()
+    typed.fields = [TypedField.new_field("password", SECRET)]
+    with patch.object(KeeperRecord, "load", return_value=typed):
+        assert provider.get({"record": "fixture", "field": "password"}) == SECRET
+        typed.fields.append(TypedField.new_field("password", "other"))
+        with pytest.raises(Denied):
+            provider.get({"record": "fixture", "field": "password"})
+    provider.close()
+
+
+def test_admin_init_and_client_file_permissions(tmp_path):
+    from keeper_agent.cli import initialize, add_client, main
+    from keeper_agent.security import read_json
+    state = tmp_path / "private"
+    initialize(state, "fixture@example.invalid", 19463)
+    with pytest.raises(Denied):
+        initialize(state, "fixture@example.invalid", 19463)
+    (state / "policy.json").write_text(json.dumps(policy(command(tmp_path, "print('ok')"))))
+    client = state / "client.json"
+    with pytest.raises(Denied, match="private broker state"):
+        add_client(state, "fixture", ["test"], tmp_path / "outside.json")
+    add_client(state, "fixture", ["test"], client)
+    # Regression: inheritance-only Windows ACL entries made token files unreadable.
+    assert len(read_json(client)["token"]) >= 48
+    assert "token" not in read_json(state / "clients.json")["fixture"]
+    assert main(["client-revoke", "--state", str(state), "--name", "fixture"]) == 0
+    assert read_json(state / "clients.json") == {}
+
+
+def test_totp_is_injected_and_redacted(tmp_path):
+    import pyotp
+    seed = "JBSWY3DPEHPK3PXP"
+    class TOTPProvider(FakeProvider):
+        def get(self, ref):
+            return seed
+    a = command(tmp_path, "import os; s=os.environ['FIXTURE']; assert s.isdigit() and len(s)==6; print(s)")
+    a["secrets"]["key"]["transform"] = "totp"
+    result = Engine(policy(a), TOTPProvider()).run("test")
+    assert result["exit_code"] == 0
+    assert result["output"].strip() == "[REDACTED]"

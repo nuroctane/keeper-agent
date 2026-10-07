@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+state/
+client.json
+*.key
+*.crt
+work/
+keeper.json
+clients.json
+*-client.json
+server.json
+audit.jsonl
+.env
+.env.*
+!.env.example
