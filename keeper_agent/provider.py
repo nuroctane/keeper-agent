@@ -8,9 +8,9 @@ from .security import Denied, read_json
 
 
 class KeeperProvider:
-    """Commander owns authentication. Only startup can prompt on the admin terminal."""
+    """Commander owns authentication through the terminal or a supplied login UI."""
 
-    def __init__(self, config):
+    def __init__(self, config, login_ui=None):
         from keepercommander.__main__ import get_params_from_config
         from keepercommander import api
 
@@ -22,7 +22,7 @@ class KeeperProvider:
         self.params = get_params_from_config(str(config))
         self.params.debug = False
         self.params.batch_mode = False
-        api.login(self.params)
+        api.login(self.params, login_ui=login_ui)
         if not self.params.session_token:
             raise Denied("Keeper login did not complete")
         self.params.batch_mode = True

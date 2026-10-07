@@ -1,5 +1,14 @@
 # Validation — October 6, 2026
 
+## Browser application 0.3 — October 7, 2026
+
+- 47 backend cases passed across the default suite, the opt-in Chromium test, and the final web regression run. Thirteen web tests cover authentication, exact Host/Origin, CSRF, session expiry/logout, request limits, real TLS/Secure cookies, persisted actions/grants, explicit client downloads, typed Keeper challenge callbacks with synthetic credentials, and safe cleanup of finished workers.
+- Three authenticated-browser Playwright tests passed: real backend persistence and action execution through pinned local TLS; client download/revocation; mobile layout; and typed password/device/MFA interface challenges. Only Keeper challenge responses are simulated in that test; no live vault is used.
+- Five existing preview interface tests passed. Svelte/TypeScript diagnostics: zero errors and warnings. Production assets: 92.85 kB JavaScript (33.89 kB gzip), 27.23 kB CSS (6.24 kB gzip), plus a small dynamic import. These asset sizes are not a RAM benchmark.
+- The Windows 0.3 frozen web host passed startup, bundled assets, authenticated session, logout, and isolated login-worker import/sanitized-failure smoke tests without contacting Keeper or using an installed Python runtime.
+- No live Keeper authentication or independent security audit was performed. Hardware-key-only, biometric, enterprise SSO, and account recovery flows require existing Keeper tools. Browser workflows run on the broker host; interactive site MFA still needs access to that host's desktop.
+- Web deployment, session protections, and authentication limitations are documented in [WEB.md](docs/WEB.md). Desktop validation from version 0.2 below remains historical; version 0.3 packaging results will be recorded separately.
+
 ## Desktop update — October 7, 2026
 
 - 34 backend tests passed, including real Chromium with synthetic credentials and the desktop's full action-run path through pinned local TLS. Temporary client cleanup, interruption-safe expiry, metadata filtering, CRUD, and grants/revocation were covered.
@@ -31,7 +40,7 @@ Tested versions: Keeper Commander 18.1.6, Playwright 1.63.0, Chromium 153.0.8010
 
 ## Not verified or activated
 
-- No real Keeper login, device approval, account MFA, vault read, or credential export took place. A live connection requires the owner's private terminal authentication.
+- No real Keeper login, device approval, account MFA, vault read, or credential export took place. A live connection requires the owner's private authentication through a supported browser login flow or terminal.
 - No production API endpoint, real website login, account action, or production credential was used. Individual site selectors, success checks and MFA flows need configuration.
 - A separate OS account has not been provisioned. Tests ran under the current account with synthetic secrets; this is not evidence of isolation from another user or an administrator.
 - Microsoft Edge launch timed out on this host. The browser test passed using Playwright's Chromium; the example and recommended setup use Chromium.

@@ -42,5 +42,6 @@ assert not client.exists()
 assert not request("delete_action", name="fixture")["actions"]
 help_result = subprocess.run([str(core), "serve", "--help"], capture_output=True, timeout=30)
 assert help_result.returncode == 0
+assert subprocess.run([str(core), "web", "--help"], capture_output=True, timeout=30).returncode == 0
 print(json.dumps({"passed": True, "initialSnapshotSeconds": round(first, 3),
     "repeatSnapshotSeconds": round(warm, 3), "syntheticState": str(state)}))

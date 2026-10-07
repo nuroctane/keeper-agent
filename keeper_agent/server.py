@@ -133,7 +133,7 @@ class LocalServer(HTTPServer):
         pass
 
 
-def serve(state, policy, provider):
+def serve(state, policy, provider, ready=None):
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(state / "server.crt", state / "server.key")
@@ -145,6 +145,8 @@ def serve(state, policy, provider):
         status_path = state / "broker-status.json"
         replace_private(status_path, {"policyDigest": policy_digest(policy)})
         print(f"Keeper Agent listening on https://127.0.0.1:{server.server_port}. Ctrl+C to lock.", flush=True)
+        if ready:
+            ready()
         try:
             server.serve_forever()
         finally:

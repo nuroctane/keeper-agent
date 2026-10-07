@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from './Icon.svelte';
+  import WebConnection from './WebConnection.svelte';
   import {
     request,
     preview,
@@ -8,11 +9,14 @@
     loginTerminal,
     browserSetupTerminal,
     template,
+    web,
+    logout,
+    downloadClient,
   } from './api';
   import { emptySnapshot, type Snapshot, type Kind, type PolicyAction } from './types';
 
   type Page = 'actions' | 'agents' | 'activity' | 'vault' | 'settings';
-  type Modal = 'action' | 'agent' | 'run' | 'revoke' | 'delete' | null;
+  type Modal = 'action' | 'agent' | 'run' | 'revoke' | 'delete' | 'folder' | null;
   let page = $state<Page>('actions');
   let data = $state<Snapshot>(emptySnapshot());
   let loading = $state(true);
@@ -41,12 +45,14 @@
   let passwordSelector = $state('input[name=password]');
   let submitSelector = $state('button[type=submit]');
   let successSelector = $state('');
+  let browserHeadless = $state(web);
   let advanced = $state(false);
   let editorJson = $state('');
   let agentName = $state('');
   let grants = $state<string[]>([]);
   let target = $state('');
   let result = $state('');
+  let folderPath = $state('');
   let email = $state('');
   let region = $state('US');
   let theme = $state(localStorage.getItem('keeper-agent-theme') || 'dark');
@@ -150,6 +156,7 @@
       return;
     }
     editing = false;
+    browserHeadless = web;
     actionName = '';
     description = '';
     kind = 'http';
@@ -204,7 +211,7 @@
     return {
       ...base,
       origins: [new URL(destination).origin],
-      headless: false,
+      headless: browserHeadless,
       secrets: {
         username: { record: record.trim(), field: 'login' },
         password: { record: record.trim(), field: 'password' },
@@ -245,13 +252,29 @@
   async function setup() {
     await perform(async () => {
       data = await request('initialize', { email, region });
-      message = 'Broker folder created. Open the private terminal to connect Keeper.';
+      message = web
+        ? 'Workspace created. Connect Keeper below.'
+        : 'Broker folder created. Open the private terminal to connect Keeper.';
     });
   }
   async function choose() {
+    if (web) {
+      folderPath = data.statePath;
+      formError = '';
+      modal = 'folder';
+      return;
+    }
     await perform(async () => {
       if (await chooseState()) await snapshotRefresh();
       else if (preview) message = 'Folder selection is available in the desktop application.';
+    });
+  }
+  async function selectFolder() {
+    await perform(async () => {
+      data = await request('select_state', { path: folderPath });
+      selected = data.actions[0]?.name || '';
+      modal = null;
+      message = 'Workspace selected for this server session.';
     });
   }
   async function connect() {
@@ -352,6 +375,9 @@
         >{/each}
     </nav>
     <div class="sidebar-bottom">
+      {#if web}<button class="button subtle full" onclick={() => perform(logout)}
+          ><Icon name="lock" size={15} />Sign out</button
+        >{/if}
       <div class="privacy-note">
         <span class="small-shield"><Icon name="lock" size={15} /></span>
         <div>
@@ -419,7 +445,9 @@
         </div>{/if}
       {#if data.pendingRestart}<div class="notice warn">
           <Icon name="info" size={18} /><span
-            >Policy changed. Restart the broker in its private terminal before running actions.</span
+            >{web
+              ? 'Policy changed. Disconnect and reconnect Keeper in Vault connection before running actions.'
+              : 'Policy changed. Restart the broker in its private terminal before running actions.'}</span
           >
         </div>{/if}
       <div class="page-heading">
@@ -651,7 +679,13 @@
                   {#each client.actions as a}<span>{a}</span>{/each}
                 </div>
               </div>
-              <span class="badge success">Access granted</span><button
+              <span class="badge success">Access granted</span>
+              {#if web}<button
+                  class="button secondary"
+                  disabled={busy}
+                  onclick={() => perform(() => downloadClient(client.name))}>Download client</button
+                >{/if}
+              <button
                 class="button subtle danger"
                 onclick={() => {
                   target = client.name;
@@ -696,7 +730,8 @@
                   ><span class="event-icon" class:failed={event.status === 'failed'}
                     ><Icon name={event.status === 'failed' ? 'close' : 'check'} size={14} /></span
                   ><strong>{event.action}</strong></span
-                ><span>{event.client.startsWith('desktop-run-') ? 'Desktop' : event.client}</span
+                ><span
+                  >{event.client.startsWith('desktop-run-') ? 'Administrator' : event.client}</span
                 ><span
                   ><span
                     class="badge"
@@ -757,8 +792,9 @@
                   ></label
                 >
                 <p class="field-hint">
-                  This creates a private broker folder. You’ll enter your master password and MFA in
-                  a separate terminal.
+                  {web
+                    ? 'This creates a private folder on the broker host. Keeper login and MFA will appear here next.'
+                    : 'This creates a private broker folder. You’ll enter your master password and MFA in a separate terminal.'}
                 </p>
                 <button class="button primary full" disabled={busy || !email}
                   >{busy ? 'Setting up…' : 'Create workspace'}<Icon
@@ -789,18 +825,20 @@
                   </dd>
                 </div>
               </dl>
-              <button class="button primary full" disabled={busy || data.online} onclick={connect}
-                ><Icon name="terminal" size={17} />{data.online
-                  ? 'Broker connected'
-                  : 'Open private login terminal'}</button
-              >
-              <p class="field-hint">
-                Complete login in the terminal, then refresh this window. Close that terminal with
-                Ctrl+C to disconnect.
-              </p>
-              <button class="text-button" onclick={snapshotRefresh}
-                ><Icon name="refresh" size={14} />Refresh connection</button
-              >{/if}
+              <!-- Keeper browser login uses typed challenges, not a remote terminal. -->
+              {#if web}<WebConnection online={data.online} onchanged={snapshotRefresh} />{:else}
+                <button class="button primary full" disabled={busy || data.online} onclick={connect}
+                  ><Icon name="terminal" size={17} />{data.online
+                    ? 'Broker connected'
+                    : 'Open private login terminal'}</button
+                >
+                <p class="field-hint">
+                  Complete login in the terminal, then refresh this window. Close that terminal with
+                  Ctrl+C to disconnect.
+                </p>
+                <button class="text-button" onclick={snapshotRefresh}
+                  ><Icon name="refresh" size={14} />Refresh connection</button
+                >{/if}{/if}
           </section>
           <aside class="vault-guidance">
             <span class="eyebrow">HOW ACCESS WORKS</span>
@@ -808,7 +846,11 @@
               <b>1</b>
               <div>
                 <h3>You connect Keeper</h3>
-                <p>Your login stays in the broker account’s private terminal.</p>
+                <p>
+                  {web
+                    ? 'Authenticate through this private web session. Keeper credentials stay on your broker and with Keeper.'
+                    : 'Your login stays in the broker account’s private terminal.'}
+                </p>
               </div>
             </div>
             <div class="guidance-step">
@@ -867,9 +909,11 @@
                 this OS account’s browser cache.
               </p>
             </div>
-            <button class="button secondary" disabled={busy} onclick={setupBrowser}
-              ><Icon name="browser" size={16} />Install browser</button
-            >
+            {#if web}<WebConnection install />{:else}<button
+                class="button secondary"
+                disabled={busy}
+                onclick={setupBrowser}><Icon name="browser" size={16} />Install browser</button
+              >{/if}
           </div>
           <div class="settings-row">
             <div>
@@ -884,7 +928,7 @@
           <div class="settings-row">
             <div>
               <h3>Keeper Agent</h3>
-              <p>Desktop 0.2.0 · Windows & macOS</p>
+              <p>{web ? 'Web administrator' : 'Desktop'} 0.3.0 · Windows & macOS</p>
             </div>
             <span class="muted">Local. Deliberate. Yours.</span>
           </div>
@@ -925,7 +969,9 @@
                 ? `Run ${target}`
                 : modal === 'revoke'
                   ? 'Revoke agent access?'
-                  : 'Delete this action?'}
+                  : modal === 'folder'
+                    ? 'Choose a broker folder'
+                    : 'Delete this action?'}
         </h2>
       </div>
       <button
@@ -1063,10 +1109,14 @@
             </div>
             <div class="inline-info">
               <Icon name="browser" size={16} /><span
-                >Install the workflow browser in Settings first. Complete MFA in the private browser
-                when prompted.</span
+                >Install the workflow browser in Settings first. A visible workflow browser runs on
+                the broker host; use headless mode for unattended tasks.</span
               >
             </div>{/if}
+          {#if kind === 'browser'}<label class="checkbox-line"
+              ><input type="checkbox" bind:checked={browserHeadless} />Run without a visible browser
+              window</label
+            >{/if}
           <button class="text-button advanced-link" onclick={openAdvanced}
             ><Icon name="settings" size={15} />Advanced policy editor<Icon
               name="chevron"
@@ -1074,6 +1124,16 @@
             /></button
           >
         {/if}
+      {:else if modal === 'folder'}<label
+          >Broker-host folder<input
+            bind:value={folderPath}
+            placeholder="Absolute path on the server"
+          /></label
+        >
+        <p class="field-hint">
+          Select an existing folder containing keeper.json on the machine hosting this web app.
+          Disconnect the current broker first. This selection lasts until the server restarts.
+        </p>
       {:else if modal === 'agent'}<label
           >Agent name<input placeholder="codex" bind:value={agentName} /></label
         >
@@ -1116,12 +1176,16 @@
     </div>
     <div class="dialog-footer">
       <button class="button secondary" disabled={busy} onclick={() => (modal = null)}
-        >{result ? 'Close' : 'Cancel'}</button
+        >{modal === 'run' && result ? 'Close' : 'Cancel'}</button
       >{#if modal === 'action'}<button
           class="button primary"
           disabled={busy || !actionName}
           onclick={saveAction}
           >{busy ? 'Saving…' : 'Save action'}<Icon name="check" size={16} /></button
+        >{:else if modal === 'folder'}<button
+          class="button primary"
+          disabled={busy || !folderPath}
+          onclick={selectFolder}>Use folder</button
         >{:else if modal === 'agent'}<button
           class="button primary"
           disabled={busy || !agentName || !grants.length}

@@ -1741,3 +1741,220 @@ main,
     display: none;
   }
 }
+
+.web-unlock {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.unlock-card {
+  width: 100%;
+  max-width: 470px;
+  padding: 36px;
+}
+.unlock-card .brand-mark {
+  margin-bottom: 30px;
+}
+.unlock-card h1 {
+  font-size: 25px;
+}
+.web-connection {
+  width: 100%;
+  max-width: 600px;
+}
+.web-connection h3 {
+  margin-top: 18px;
+}
+.web-connection .notice {
+  margin-top: 12px;
+}
+@media (max-width: 700px) {
+  body {
+    min-width: 320px;
+  }
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar {
+    flex-direction: row;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 10px;
+    gap: 8px;
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar .brand {
+    margin: 0 8px 0 0;
+    font-size: 19px;
+    gap: 7px;
+  }
+  .sidebar .brand-mark {
+    width: 32px;
+    height: 36px;
+  }
+  .brand-sub {
+    font-size: 7px;
+    letter-spacing: 2px;
+  }
+  .workspace-label,
+  .privacy-note,
+  .identity {
+    display: none;
+  }
+  .sidebar nav {
+    flex-direction: row;
+    gap: 2px;
+  }
+  .sidebar nav button {
+    width: 34px;
+    padding: 8px;
+  }
+  .sidebar nav button span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .sidebar-bottom {
+    display: contents;
+  }
+  .sidebar-bottom > .button {
+    position: fixed;
+    bottom: 8px;
+    right: 10px;
+    z-index: 2;
+    width: auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    font-size: 10px;
+  }
+  main {
+    flex: 1;
+  }
+  .topbar {
+    padding: 0 16px;
+    height: 50px;
+  }
+  .breadcrumbs {
+    gap: 6px;
+    font-size: 9px;
+  }
+  .connection {
+    font-size: 9px;
+  }
+  .main-scroll {
+    padding: 24px 16px 0;
+  }
+  .page-heading {
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 22px;
+  }
+  .page-heading > .button {
+    margin-top: 8px;
+  }
+  .summary-strip {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .summary-strip > div {
+    font-size: 9px;
+  }
+  .list-toolbar {
+    padding: 12px;
+  }
+  .list-toolbar .search {
+    max-width: none;
+    flex-basis: 100%;
+  }
+  .grant-count {
+    width: 24px;
+  }
+  .grant-word {
+    display: none;
+  }
+  .list-labels {
+    grid-template-columns: 1fr 30px 15px;
+  }
+  .list-labels span:nth-child(2) {
+    visibility: hidden;
+  }
+  .list-footer {
+    padding: 12px;
+    font-size: 8px;
+  }
+  .onboarding {
+    padding: 12px;
+  }
+  .onboarding h2 {
+    font-size: 24px;
+  }
+  .setup-steps {
+    gap: 10px;
+    font-size: 9px;
+  }
+  .vault-card {
+    padding: 20px;
+    min-width: 0;
+  }
+  .form-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .form-grid.url-grid {
+    grid-template-columns: 80px 1fr;
+    gap: 12px;
+  }
+  dialog {
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+  }
+  .dialog-header,
+  .dialog-body,
+  .dialog-footer {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+  .agent-row {
+    flex-wrap: wrap;
+    padding: 20px;
+    gap: 10px;
+  }
+  .agent-info {
+    min-width: 180px;
+  }
+  .panel-title {
+    flex-wrap: wrap;
+    padding: 20px;
+  }
+  .activity-table {
+    overflow-x: auto;
+  }
+  .activity-head,
+  .event-row {
+    min-width: 520px;
+  }
+  .settings-row {
+    gap: 15px;
+  }
+  .settings-row .path {
+    max-width: 270px;
+  }
+  .unlock-card {
+    padding: 26px;
+  }
+  .page-footer {
+    padding-bottom: 52px;
+  }
+}
+
+label.checkbox-line {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 10px;
+}

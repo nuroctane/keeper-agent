@@ -1,7 +1,7 @@
 {
   "name": "keeper-agent-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -13,7 +13,8 @@
     "desktop:build": "tauri build --config src-tauri/tauri.bundle.conf.json",
     "test": "playwright test",
     "format": "prettier --write src tests *.json *.ts *.js src-tauri/*.json src-tauri/capabilities/*.json",
-    "format:check": "prettier --check src tests *.json *.ts *.js src-tauri/*.json src-tauri/capabilities/*.json"
+    "format:check": "prettier --check src tests *.json *.ts *.js src-tauri/*.json src-tauri/capabilities/*.json",
+    "test:web": "npm run build && playwright test --config playwright.web.config.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

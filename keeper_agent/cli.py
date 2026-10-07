@@ -117,8 +117,13 @@ def call_client(path, body):
 
 
 def main(argv=None):
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments and arguments[0] == "web":
+        from .web import main as web_main
+        return web_main(arguments[1:])
     parser = argparse.ArgumentParser(description="Use approved actions backed by a Keeper Personal vault")
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("web", help="Serve the authenticated browser administrator (web --help)")
     for name in ("init", "serve", "client-add", "client-revoke", "doctor"):
         command = sub.add_parser(name)
         command.add_argument("--state", type=Path, required=True, help="Private directory owned by the broker account")

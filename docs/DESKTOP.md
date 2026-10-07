@@ -21,7 +21,7 @@ The simple API form returns status only. Commands suppress output by default. Br
 
 Tauri 2 hosts Svelte 5 in the platform webview (WebView2 on Windows, WKWebView on macOS). Local, bundled assets use system fonts. No Electron runtime, analytics, remote fonts, polling loop, or automatic action retries are included.
 
-The frontend calls a small allowlist of Rust IPC commands. Rust selects the private state path and serializes requests to a Python helper over bounded stdio. There is no administrator HTTP server. The helper uses the existing CLI policy validation, private-file routines, and pinned loopback HTTPS client. Packaging includes Python and dependencies in an on-directory helper, avoiding extraction each time it is launched.
+The native frontend calls a small allowlist of Rust IPC commands. Rust selects the private state path and serializes requests to a Python helper over bounded stdio. Native mode needs no administrator HTTP server. The separately launched [browser administrator](WEB.md) serves the same frontend through authenticated HTTP sessions. The helper uses the existing CLI policy validation, private-file routines, and pinned loopback HTTPS client. Packaging includes Python and dependencies in an on-directory helper, avoiding extraction each time it is launched.
 
 The action overview returns metadata, not record UIDs or tokens. The **policy editor is an administrator view**: it shows the full saved policy, including any literals manually entered outside the GUI. Use Keeper references throughout; common literal credential headers/environment variables are rejected when saving through the GUI, but this is not a general secret detector. Action results retain the broker's documented limits and best-effort redaction.
 
@@ -51,6 +51,9 @@ On macOS use `python3.12 -m venv .venv` and `.venv/bin/python`; install `-e '.[k
 From the repository root, with the development environment installed:
 
 ```powershell
+cd desktop
+npm run build
+cd ..
 .venv/Scripts/python.exe desktop/scripts/package_core.py
 cd desktop
 npm run desktop:build -- --bundles nsis

@@ -1,6 +1,6 @@
 # Keeper Agent
 
-A local CLI and HTTPS broker for using a **Keeper Personal vault** in agent workflows. Built on Keeper Commander; no Secrets Manager subscription is required for the Commander approach. The Keeper vault stays in Keeper's cloud.
+A local CLI, desktop and browser administrator, and HTTPS broker for using a **Keeper Personal vault** in agent workflows. Built on Keeper Commander; no Secrets Manager subscription is required for the Commander approach. The Keeper vault stays in Keeper's cloud.
 
 Agents invoke **named, preconfigured actions**. They cannot supply record IDs, retrieve raw secrets, change command arguments, choose URLs, or control a browser session through the broker API.
 
@@ -12,6 +12,8 @@ Agent CLI → local HTTPS + scoped client token → private broker → Keeper Co
 ```
 
 ## What is implemented
+
+- Authenticated browser administrator with the same charcoal/gold interface: real action editing/execution, grants and client downloads, activity, workspace setup, Keeper login challenges, and browser installation. Responsive phone layout; localhost by default, explicit HTTPS for remote access. See [web setup and authentication limits](docs/WEB.md).
 
 - Native desktop administrator for Windows and macOS: dark charcoal/gold interface, action editing, agent grants, activity, private login terminal, and browser setup. See [desktop setup and architecture](docs/DESKTOP.md). Windows validation and macOS limitations are in [VALIDATION.md](VALIDATION.md).
 
@@ -97,7 +99,7 @@ keeper-agent run website-account --client C:\AgentAccess\codex-client.json
 
 If PATH is unchanged, invoke `.venv\Scripts\keeper-agent.exe` by its full path. `AGENT-USAGE.md` contains instructions suitable for the agent's own workspace.
 
-The listener is always `127.0.0.1`, with verified HTTPS; no HTTP or public network mode is provided. The current version supports agents on this machine. A remote host deployment needs a separately secured transport and is not implemented.
+The agent listener is always `127.0.0.1`, with verified HTTPS; no HTTP or public network mode is provided for agents. The current version supports agents on this machine. Remote administrator access is available through the separate [web app](docs/WEB.md); it does not expose the agent listener.
 
 ## Browser MFA and forms
 

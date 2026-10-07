@@ -201,6 +201,12 @@ def dispatch(request):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "web-worker":
+        from .web_worker import main as worker_main
+        return worker_main(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "web":
+        from .web import main as web_main
+        return web_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-browser":
         from playwright.__main__ import main as playwright_main
         sys.argv = ["playwright", "install", "chromium"]
