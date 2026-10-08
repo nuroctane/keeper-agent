@@ -1,13 +1,14 @@
 # Validation — October 6, 2026
 
-## Browser application 0.3 — October 7, 2026
+## Browser application 0.3 — verified October 8, 2026
 
-- 48 backend cases passed across the default suite, the opt-in Chromium test, and the final web regression run. Fourteen web tests cover authentication, exact Host/Origin, CSRF, session expiry/logout, request limits, real TLS/Secure cookies, persisted actions/grants, explicit client downloads, typed Keeper challenge callbacks with synthetic credentials, safe cleanup of finished workers, and rejection of cookie-only access from another localhost service.
+- [CI run 37671696574](https://github.com/nuroctane/keeper-agent/actions/runs/37671696574), source commit `c16e052`, passed on Windows x64 and macOS ARM64. Each platform passed 48 backend tests, including real Chromium with synthetic credentials. Fourteen web tests cover authentication, exact Host/Origin, CSRF, session expiry/logout, request limits, real TLS/Secure cookies, persisted actions/grants, explicit client downloads, typed Keeper challenge callbacks with synthetic credentials, safe cleanup of finished workers, and rejection of cookie-only access from another localhost service.
 - Three authenticated-browser Playwright tests passed: real backend persistence and action execution through pinned local TLS; client download/revocation; mobile layout; and typed password/device/MFA interface challenges. Only Keeper challenge responses are simulated in that test; no live vault is used.
 - Five existing preview interface tests passed. Svelte/TypeScript diagnostics: zero errors and warnings. Production assets: 93.11 kB JavaScript (33.95 kB gzip), 27.23 kB CSS (6.24 kB gzip), plus a small dynamic import. These asset sizes are not a RAM benchmark.
-- The Windows 0.3 frozen web host passed startup, bundled assets, authenticated session, logout, and isolated login-worker import/sanitized-failure smoke tests without contacting Keeper or using an installed Python runtime.
+- Both frozen web hosts passed startup, bundled assets, authenticated session, cookie-only access rejection, logout, and isolated login-worker import/sanitized-failure smoke tests without contacting Keeper or using an installed Python runtime. Both frozen desktop helpers also passed synthetic CRUD/grant smoke tests. The local Windows packaged Chromium installation worker completed successfully.
+- Windows NSIS and Apple Silicon DMG packaging succeeded. Both standalone web ZIPs and both native packages passed local 7-Zip integrity tests. Sizes and SHA-256 checksums are recorded in [the 0.3 build manifest](docs/RELEASE-0.3.0.md).
 - No live Keeper authentication or independent security audit was performed. Hardware-key-only, biometric, enterprise SSO, and account recovery flows require existing Keeper tools. Browser workflows run on the broker host; interactive site MFA still needs access to that host's desktop.
-- Web deployment, session protections, and authentication limitations are documented in [WEB.md](docs/WEB.md). Desktop validation from version 0.2 below remains historical; version 0.3 packaging results will be recorded separately.
+- Web deployment, session protections, and authentication limitations are documented in [WEB.md](docs/WEB.md). Packages remain unsigned development builds; macOS notarization, Intel Mac packaging, native UI interaction, and live account/site authentication are not verified. Desktop validation from version 0.2 below remains historical.
 
 ## Desktop update — October 7, 2026
 
