@@ -42,6 +42,8 @@ class Engine:
     def __init__(self, policy, provider):
         self.policy = policy
         self.provider = provider
+        # Start time of the last successful vault sync (monotonic clock).
+        self.synced_from = None
 
     def run(self, name, policy=None, vault=None):
         # The broker passes the policy it authorized against, so a concurrent
@@ -52,15 +54,21 @@ class Engine:
         action = policy["actions"][name]
         # Commander's session is not safe to share across threads. The vault lock
         # covers only sync and secret reads; execution runs outside it.
+        arrived = time.monotonic()
         with vault or contextlib.nullcontext():
-            secrets, redact = self.resolve(action)
+            secrets, redact = self.resolve(action, arrived)
         return self.execute(action, secrets, redact)
 
-    def resolve(self, action):
+    def resolve(self, action, arrived):
         secrets = {}
         redact = []
-        if action.get("secrets"):
+        # A sync that began after this request arrived already reflects every vault
+        # change this request could have expected, so queued requests share it.
+        # Bursts cost about two syncs instead of one each, with no added staleness.
+        if action.get("secrets") and (self.synced_from is None or self.synced_from < arrived):
+            started = time.monotonic()
             self.provider.sync()
+            self.synced_from = started
         for alias, ref in action.get("secrets", {}).items():
             value = self.provider.get(ref)
             redact.append(value)

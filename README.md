@@ -81,7 +81,7 @@ Choose a **new** private state directory outside source control. Run these yours
 & $ka serve --state C:\KeeperBrokerState
 ```
 
-Complete the normal Keeper login, MFA and device approval **in that terminal**. No credentials belong in chat or command arguments. The server starts only after login and vault sync succeed. It refreshes the vault before actions that use secrets. If authentication expires, restart `serve` and authenticate again.
+Complete the normal Keeper login, MFA and device approval **in that terminal**. No credentials belong in chat or command arguments. The server starts only after login and vault sync succeed. It refreshes the vault before actions that use secrets. Requests waiting together share one refresh, but only one that began after they arrived, so no action reads an older vault than one refreshed for it alone. If authentication expires, restart `serve` and authenticate again.
 
 Login uses Commander's supported SDK/configuration flow. Device/session material may be persisted by Commander in its protected configuration or OS credential storage; this application does not promise memory-only authentication. It rejects a plaintext `password` in `keeper.json`. It does not automatically enable indefinite persistent login.
 

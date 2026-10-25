@@ -425,3 +425,63 @@ def test_actions_overlap_up_to_the_cap_while_vault_reads_stay_serial(tmp_path):
     assert counts["running_max"] == Broker.concurrency
     lines = (tmp_path / "audit.jsonl").read_text().splitlines()
     assert len(lines) == 2 * (Broker.concurrency + 2) and all(json.loads(line) for line in lines)
+
+
+class CountingVault(FakeProvider):
+    def __init__(self, delay=0.0, fail_first=False):
+        self.syncs = 0
+        self.delay = delay
+        self.fail_first = fail_first
+
+    def sync(self):
+        import time
+        time.sleep(self.delay)
+        if self.fail_first:
+            self.fail_first = False
+            raise RuntimeError("network")
+        self.syncs += 1
+
+
+def test_sequential_runs_each_sync_the_vault(tmp_path):
+    vault = CountingVault()
+    engine = Engine(policy(command(tmp_path, "print(1)")), vault)
+    engine.run("test")
+    engine.run("test")
+    assert vault.syncs == 2
+
+
+def test_queued_burst_shares_one_sync(tmp_path):
+    import time
+    vault = CountingVault()
+    engine = Engine(policy(command(tmp_path, "print(1)")), vault)
+    lock = threading.Lock()
+    with lock:
+        runs = [threading.Thread(target=engine.run, args=("test",), kwargs={"vault": lock}) for _ in range(6)]
+        for thread in runs:
+            thread.start()
+        time.sleep(0.3)  # every request has arrived before the vault frees up
+    for thread in runs:
+        thread.join(timeout=15)
+    assert vault.syncs == 1
+
+
+def test_request_arriving_during_a_sync_gets_a_fresh_one(tmp_path):
+    import time
+    vault = CountingVault(delay=0.4)
+    engine = Engine(policy(command(tmp_path, "print(1)")), vault)
+    lock = threading.Lock()
+    first = threading.Thread(target=engine.run, args=("test",), kwargs={"vault": lock})
+    first.start()
+    time.sleep(0.15)  # arrives after the first sync began
+    engine.run("test", vault=lock)
+    first.join(timeout=15)
+    assert vault.syncs == 2
+
+
+def test_failed_sync_is_never_reused(tmp_path):
+    vault = CountingVault(fail_first=True)
+    engine = Engine(policy(command(tmp_path, "print(1)")), vault)
+    with pytest.raises(RuntimeError):
+        engine.run("test")
+    engine.run("test")
+    assert vault.syncs == 1 and engine.synced_from is not None
