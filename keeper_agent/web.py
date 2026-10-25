@@ -5,6 +5,7 @@ import argparse
 from collections import deque
 import hashlib
 import hmac
+import ipaddress
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -149,10 +150,13 @@ class WebAdmin:
         with self.auth_lock:
             while self.attempts and self.attempts[0] < now - 60:
                 self.attempts.popleft()
-            if len(self.attempts) >= 10:
-                raise Denied("Too many sign-in attempts. Wait one minute.")
-            self.attempts.append(now)
+            # The random 256-bit key cannot be guessed, so the throttle only bounds
+            # wrong attempts. The correct key is checked first so that nobody can
+            # lock the administrator out by submitting wrong keys.
             if not isinstance(key, str) or len(key) > 256 or not hmac.compare_digest(hashlib.sha256(key.encode()).digest(), self.key_hash):
+                if len(self.attempts) >= 10:
+                    raise Denied("Too many sign-in attempts. Wait one minute.")
+                self.attempts.append(now)
                 raise Denied("Invalid administrator access key")
             self.sessions = {k: v for k, v in self.sessions.items() if now - v["seen"] < 1800 and now - v["created"] < 28800}
             if len(self.sessions) >= 16:
@@ -359,8 +363,13 @@ class WebServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
+    connections = 64
+    per_address = 8
+
     def __init__(self, address, handler):
-        self.slots = threading.BoundedSemaphore(16)
+        self.slots = threading.BoundedSemaphore(self.connections)
+        self.open = {}
+        self.open_lock = threading.Lock()
         self.tls = None
         super().__init__(address, handler)
 
@@ -368,28 +377,54 @@ class WebServer(ThreadingHTTPServer):
         sock, address = super().get_request()
         sock.settimeout(10)
         if self.tls:
+            # Handshake on the request thread: a client that never sends a
+            # ClientHello must not stall the accept loop for everyone else.
             try:
-                sock = self.tls.wrap_socket(sock, server_side=True)
+                sock = self.tls.wrap_socket(sock, server_side=True, do_handshake_on_connect=False)
             except Exception:
                 sock.close()
                 raise
         return sock, address
 
+    def admit(self, host):
+        # Loopback clients all share one address, so only the total limit applies.
+        capped = not ipaddress.ip_address(host).is_loopback
+        with self.open_lock:
+            if capped and self.open.get(host, 0) >= self.per_address:
+                return False
+            if not self.slots.acquire(blocking=False):
+                return False
+            self.open[host] = self.open.get(host, 0) + 1
+            return True
+
+    def release(self, host):
+        with self.open_lock:
+            self.open[host] -= 1
+            if not self.open[host]:
+                del self.open[host]
+        self.slots.release()
+
     def process_request(self, request, client_address):
-        if not self.slots.acquire(blocking=False):
+        if not self.admit(client_address[0]):
             self.shutdown_request(request)
             return
         try:
             super().process_request(request, client_address)
         except Exception:
-            self.slots.release()
+            self.release(client_address[0])
             raise
 
     def process_request_thread(self, request, client_address):
         try:
+            if self.tls:
+                try:
+                    request.do_handshake()
+                except Exception:
+                    self.shutdown_request(request)
+                    return
             super().process_request_thread(request, client_address)
         finally:
-            self.slots.release()
+            self.release(client_address[0])
 
     def handle_error(self, request, client_address):
         pass

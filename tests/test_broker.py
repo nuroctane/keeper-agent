@@ -238,3 +238,55 @@ def test_totp_is_injected_and_redacted(tmp_path):
     result = Engine(policy(a), TOTPProvider()).run("test")
     assert result["exit_code"] == 0
     assert result["output"].strip() == "[REDACTED]"
+
+
+def test_undeclared_placeholder_rejected_at_validation(tmp_path):
+    action = command(tmp_path, "print('x')")
+    action["env"]["OTHER"] = "{{undeclared}}"
+    with pytest.raises(Denied, match="undeclared secret alias"):
+        policy(action)
+    with pytest.raises(Denied, match="undeclared secret alias"):
+        policy({"kind": "http", "url": "https://example.com", "json": {"a": ["{{missing}}"]}})
+    policy({"kind": "http", "url": "https://example.com", "headers": {"Authorization": "Bearer {{t}}"},
+            "secrets": {"t": {"record": "fixture", "field": "password"}}})
+
+
+def test_broker_stays_reachable_while_an_action_runs(tmp_path):
+    import socket
+    import time
+    from keeper_agent.desktop import online
+    certificate(tmp_path)
+    write_private(tmp_path / "server.json", {"port": 0})
+    token = "test-client-" + "x" * 48
+    write_private(tmp_path / "clients.json", {"agent": {"sha256": token_hash(token), "actions": ["test"]}})
+    broker = Broker(tmp_path, policy(command(tmp_path, "import time; time.sleep(3)", output="none")), FakeProvider())
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(tmp_path / "server.crt", tmp_path / "server.key")
+    server = LocalServer(0, handler_for(broker), tls)
+    (tmp_path / "server.json").write_text(json.dumps({"port": server.server_port}))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    path = tmp_path / "client.json"
+    write_private(path, {"url": f"https://127.0.0.1:{server.server_port}/v1", "token": token,
+                         "certificate": (tmp_path / "server.crt").read_text()})
+    idle = socket.create_connection(("127.0.0.1", server.server_port))  # never sends a ClientHello
+    try:
+        runs = [threading.Thread(target=call_client, args=(path, {"operation": "run", "action": "test"}))
+                for _ in range(2)]
+        for run in runs:
+            run.start()
+        time.sleep(0.5)
+        start = time.monotonic()
+        assert online(tmp_path)
+        assert call_client(path, {"operation": "list"})["actions"][0]["name"] == "test"
+        assert time.monotonic() - start < 2
+        for run in runs:
+            run.join(timeout=15)
+        statuses = [json.loads(line)["status"] for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
+        # Actions still execute one at a time.
+        assert statuses == ["started", "completed", "started", "completed"]
+    finally:
+        idle.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

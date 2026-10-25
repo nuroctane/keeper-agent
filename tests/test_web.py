@@ -235,3 +235,57 @@ def test_web_server_https_uses_secure_cookie_and_same_origin(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_wrong_keys_never_lock_out_the_real_key(web):
+    admin, client = web
+    for _ in range(12):
+        assert client.post('/admin/login', json={"key": "wrong"}).status_code == 403
+    assert 'Wait one minute' in client.post('/admin/login', json={"key": "wrong"}).text
+    login(client)
+    assert op(client, 'snapshot').status_code == 200
+
+
+def test_connection_limits_cap_each_remote_address_but_not_loopback(web):
+    from keeper_agent.web import WebServer
+    server = WebServer.__new__(WebServer)
+    server.slots = threading.BoundedSemaphore(WebServer.connections)
+    server.open, server.open_lock = {}, threading.Lock()
+    assert all(server.admit("203.0.113.5") for _ in range(WebServer.per_address))
+    assert not server.admit("203.0.113.5")
+    assert server.admit("198.51.100.7")
+    assert all(server.admit("127.0.0.1") for _ in range(WebServer.per_address + 1))
+    server.release("203.0.113.5")
+    assert server.admit("203.0.113.5")
+
+
+def test_idle_tls_client_does_not_block_other_connections(tmp_path):
+    import socket
+    import ssl
+    import time
+    from keeper_agent.cli import certificate
+    certificate(tmp_path)
+    assets = tmp_path/'assets'
+    assets.mkdir()
+    (assets/'index.html').write_text('<head></head>')
+    admin = WebAdmin(tmp_path/'broker', assets, 'https://127.0.0.1:0', 'synthetic-admin-'+'x'*40)
+    server = WebServer(('127.0.0.1',0), handler_for(admin))
+    server.tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.tls.load_cert_chain(tmp_path/'server.crt', tmp_path/'server.key')
+    admin.origin = f'https://127.0.0.1:{server.server_port}'
+    admin.authority = f'127.0.0.1:{server.server_port}'
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    idle = socket.create_connection(('127.0.0.1', server.server_port))  # never sends a ClientHello
+    trust = ssl.create_default_context(cafile=str(tmp_path/'server.crt'))
+    try:
+        time.sleep(0.2)
+        start = time.monotonic()
+        with httpx.Client(base_url=admin.origin, verify=trust, trust_env=False, timeout=15) as client:
+            assert client.get('/').status_code == 200
+        assert time.monotonic() - start < 2
+    finally:
+        idle.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)

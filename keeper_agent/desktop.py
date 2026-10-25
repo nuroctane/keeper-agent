@@ -23,6 +23,9 @@ from .security import Denied, read_json
 
 REGIONS = {"US": "keepersecurity.com", "EU": "keepersecurity.eu", "AU": "keepersecurity.com.au",
            "CA": "keepersecurity.ca", "JP": "keepersecurity.jp", "US GOV": "govcloud.keepersecurity.us"}
+# Name fragments that mark a header or environment variable as carrying a credential.
+CREDENTIAL_WORDS = ("auth", "key", "token", "cookie", "secret", "pass", "pwd", "session",
+                    "credential", "signature", "bearer")
 
 
 def policy_digest(policy):
@@ -100,10 +103,10 @@ def snapshot(state):
 def validate_templates(action):
     """The UI's policy editor must not introduce literal credential headers/env."""
     for key, value in action.get("headers", {}).items():
-        if any(word in key.lower() for word in ("authorization", "key", "token", "cookie")) and "{{" not in value:
+        if any(word in key.lower() for word in CREDENTIAL_WORDS) and "{{" not in value:
             raise Denied("Use a Keeper reference for credential headers, such as Bearer {{token}}")
     for key, value in action.get("env", {}).items():
-        if any(word in key.upper() for word in ("TOKEN", "SECRET", "PASSWORD", "API_KEY")) and "{{" not in value:
+        if any(word in key.lower() for word in CREDENTIAL_WORDS) and "{{" not in value:
             raise Denied("Use Keeper references for credential environment variables")
 
 
@@ -179,7 +182,7 @@ def dispatch(request):
             raise Denied("Action no longer exists")
         current = snapshot(state)
         if not current["online"]:
-            raise Denied("Connect Keeper in the private terminal first")
+            raise Denied("The broker is not connected. Connect Keeper first.")
         if current["pendingRestart"]:
             raise Denied("Restart the broker to apply the latest policy before running")
         client_name = "desktop-run-" + uuid.uuid4().hex

@@ -184,6 +184,38 @@ fn set_state_path(
     Ok(())
 }
 
+/// PowerShell also ends single-quoted strings at typographic single quotes, so
+/// each of them is doubled like the ASCII quote.
+#[cfg(any(windows, test))]
+fn powershell_quote(s: &str) -> String {
+    let mut quoted = String::with_capacity(s.len() + 2);
+    quoted.push('\'');
+    for c in s.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            quoted.push(c);
+        }
+        quoted.push(c);
+    }
+    quoted.push('\'');
+    quoted
+}
+
+#[cfg(test)]
+mod tests {
+    use super::powershell_quote;
+
+    #[test]
+    fn powershell_quote_doubles_every_single_quote_form() {
+        assert_eq!(powershell_quote("C:\\plain"), "'C:\\plain'");
+        assert_eq!(powershell_quote("it's"), "'it''s'");
+        assert_eq!(
+            powershell_quote("a\u{2019}; calc; \u{2018}b"),
+            "'a\u{2019}\u{2019}; calc; \u{2018}\u{2018}b'"
+        );
+        assert_eq!(powershell_quote("\u{201A}\u{201B}"), "'\u{201A}\u{201A}\u{201B}\u{201B}'");
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
@@ -217,11 +249,13 @@ fn open_terminal(app: &tauri::AppHandle, extra: Vec<String>) -> Result<(), Strin
     {
         use base64::Engine;
         use std::os::windows::process::CommandExt;
-        let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
         let line = format!(
             "& {} {}",
-            quote(&binary.to_string_lossy()),
-            args.iter().map(|s| quote(s)).collect::<Vec<_>>().join(" ")
+            powershell_quote(&binary.to_string_lossy()),
+            args.iter()
+                .map(|s| powershell_quote(s))
+                .collect::<Vec<_>>()
+                .join(" ")
         );
         let encoded = base64::engine::general_purpose::STANDARD.encode(
             line.encode_utf16()

@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import re
 import subprocess
 import threading
 import time
@@ -12,10 +11,10 @@ import httpx
 import pyotp
 import psutil
 
+from .policy import PLACEHOLDER
 from .security import Denied, origin, scrub
 
 LIMIT = 256 * 1024
-PLACEHOLDER = re.compile(r"\{\{([a-zA-Z0-9_.-]+)\}\}")
 
 
 def render(value, secrets):

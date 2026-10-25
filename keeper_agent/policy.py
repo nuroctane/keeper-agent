@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from .security import Denied, origin
 
 NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$")
+PLACEHOLDER = re.compile(r"\{\{([a-zA-Z0-9_.-]+)\}\}")
 
 
 def only(obj, allowed, required=()):
@@ -110,4 +111,16 @@ def validate(policy):
             text(ref["field"])
             if ref.get("transform") not in {None, "totp"}:
                 raise Denied("Unsupported secret transform")
+        if placeholders({k: v for k, v in a.items() if k != "secrets"}) - refs.keys():
+            raise Denied("Policy references an undeclared secret alias")
     return policy
+
+
+def placeholders(value):
+    if isinstance(value, str):
+        return set(PLACEHOLDER.findall(value))
+    if isinstance(value, list):
+        return set().union(*map(placeholders, value))
+    if isinstance(value, dict):
+        return set().union(*map(placeholders, value.values()))
+    return set()

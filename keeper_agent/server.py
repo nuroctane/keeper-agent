@@ -4,10 +4,11 @@ import hmac
 import json
 import socket
 import ssl
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .engine import Engine
 from .security import Denied, read_json, token_hash
@@ -17,6 +18,8 @@ class Broker:
     def __init__(self, state, policy, provider):
         self.state = state
         self.engine = Engine(policy, provider)
+        # Connections are concurrent; Commander state and browser actions are not.
+        self.running = threading.Lock()
 
     def authenticate(self, token):
         if not isinstance(token, str) or not 32 <= len(token) <= 200:
@@ -50,14 +53,15 @@ class Broker:
         if not isinstance(name, str) or name not in allowed or name not in actions:
             raise Denied("Action not permitted")
         request_id = str(uuid.uuid4())
-        self.audit(request_id, client, name, "started")
-        try:
-            result = self.engine.run(name)
-        except Exception:
-            self.audit(request_id, client, name, "failed")
-            # SDK, HTTP and browser exceptions can include credentials or filled values.
-            raise Denied("Action failed; inspect policy and authentication in the admin terminal") from None
-        self.audit(request_id, client, name, "completed")
+        with self.running:
+            self.audit(request_id, client, name, "started")
+            try:
+                result = self.engine.run(name)
+            except Exception:
+                self.audit(request_id, client, name, "failed")
+                # SDK, HTTP and browser exceptions can include credentials or filled values.
+                raise Denied("Action failed; inspect policy and authentication in the admin terminal") from None
+            self.audit(request_id, client, name, "completed")
         return {"action": name, "request_id": request_id, "result": result}
 
 
@@ -113,20 +117,46 @@ def handler_for(broker):
     return Handler
 
 
-class LocalServer(HTTPServer):
-    # Serial execution: Commander state and browser actions are never shared concurrently.
+class LocalServer(ThreadingHTTPServer):
+    # Concurrent connections keep the broker reachable while an action runs;
+    # Broker.running still executes actions one at a time.
+    daemon_threads = True
+
     def __init__(self, port, handler, tls):
         self.tls = tls
+        self.slots = threading.BoundedSemaphore(32)
         super().__init__(("127.0.0.1", port), handler)
 
     def get_request(self):
         sock, address = super().get_request()
         sock.settimeout(5)
         try:
-            return self.tls.wrap_socket(sock, server_side=True), address
+            # Handshake on the request thread so an idle client cannot stall accepts.
+            return self.tls.wrap_socket(sock, server_side=True, do_handshake_on_connect=False), address
         except Exception:
             sock.close()
             raise
+
+    def process_request(self, request, client_address):
+        if not self.slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            try:
+                request.do_handshake()
+            except Exception:
+                self.shutdown_request(request)
+                return
+            super().process_request_thread(request, client_address)
+        finally:
+            self.slots.release()
 
     def handle_error(self, request, client_address):
         # Never print request bodies or a credential-bearing traceback.

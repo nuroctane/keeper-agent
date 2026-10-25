@@ -696,7 +696,11 @@
             </div>{:else}<div class="list-empty tall">
               <Icon name="agents" size={34} />
               <h3>A place for your trusted agents</h3>
-              <p>Create an action first, then grant an agent permission to use it.</p>
+              <p>
+                {data.actions.length
+                  ? 'Add an agent and choose which actions it may request.'
+                  : 'Create an action first, then grant an agent permission to use it.'}
+              </p>
               <button class="button secondary" onclick={() => go('actions')}
                 >View actions<Icon name="arrow" size={16} /></button
               >

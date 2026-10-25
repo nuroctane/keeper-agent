@@ -171,3 +171,14 @@ def test_desktop_run_over_real_pinned_tls(state):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("headers,env", [({"X-Auth": "literal-value"}, {}), ({"X-Session": "abc"}, {}),
+                                         ({}, {"DB_PASS": "literal"}), ({}, {"SERVICE_CREDENTIALS": "x"})])
+def test_literal_credentials_under_other_names_rejected(state, tmp_path, headers, env):
+    if headers:
+        a = {"kind": "http", "url": "https://example.com", "headers": headers}
+    else:
+        a = {**action(tmp_path), "env": env}
+    with pytest.raises(Denied, match="Keeper reference"):
+        req(state, "save_action", name="bad", action=a)
