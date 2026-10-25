@@ -36,7 +36,7 @@ Commander authenticates as the vault owner and can synchronize the whole vault i
 
 An approved command runs as the broker user and receives plaintext secrets in its own environment. It is trusted code, not a sandbox. Do not approve a general shell, interpreter with agent-controlled scripts, arbitrary URLs, plugins, or commands that load code/configuration from agent-writable locations. A browser destination necessarily receives the credentials used to log in. Browser routing is an application restriction, not an OS network firewall.
 
-Redaction covers literal values and common URL/base64 encodings of secrets used in that action. It cannot detect all transformations, other secrets returned by a service, or deliberate exfiltration. Only enable text/JSON extraction for trusted operations and carefully chosen fields. The strongest default is status-only output.
+Redaction replaces only exact matches of the secrets used in that action, in four forms: literal, URL-encoded, base64, and JSON-escaped. Any other transformation passes through unredacted; for example, a command that prints a secret as hex returns it readable. Redaction also misses other secrets returned by a service and cannot stop deliberate exfiltration. Only enable text/JSON extraction for trusted operations and carefully chosen fields. The strongest default is status-only output.
 
 ## Install on Windows
 
@@ -111,7 +111,7 @@ For a TOTP secret stored in Keeper, add a secret reference with `"field": "oneTi
 
 - Policy is loaded once at startup; restart the broker to apply edits. Client grants are reloaded on every request.
 - Each client gets an explicit list of named actions. There are no wildcard grants. A token is a capability to repeat those actions; use read-only, narrowly scoped upstream credentials where possible.
-- All agent requests are serialized. This is a local tool for a small number of agents, not a multi-tenant internet service.
+- The broker accepts connections concurrently, so listing actions and status checks stay responsive, but actions run one at a time against a single Keeper session. This is a local tool for a small number of agents, not a multi-tenant internet service.
 - HTTP and browser output is capped at 256 KiB. Commands have a bounded runtime and output size. Tracked command descendants are terminated on completion/timeout, but process cleanup is not a containment boundary for malicious executables.
 - HTTP timeouts bound network operations; the response loop also checks elapsed time. They are not a hard process-level wall-clock deadline.
 - `http.outputs` maps friendly names to dot-separated JSON paths, including numeric array indices. Missing fields fail the action. HTTP 4xx/5xx statuses are returned as statuses; consumers must inspect them. Commands return `exit_code`; consumers must inspect it. Browser completion means configured steps finished.
