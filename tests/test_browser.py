@@ -9,7 +9,9 @@ from keeper_agent.policy import validate
 
 
 @pytest.mark.skipif(os.environ.get("KEEPER_AGENT_BROWSER_TEST") != "1", reason="Opt-in installed browser test")
-def test_real_browser_fill_submit_redact_and_block(monkeypatch):
+@pytest.mark.parametrize("parallel", [1, 2])
+def test_real_browser_fill_submit_redact_and_block(monkeypatch, parallel):
+    """parallel=2 runs two actions at once on worker threads, as the broker does."""
     import playwright.sync_api as pw
     real_factory = pw.sync_playwright
     submitted = []
@@ -67,7 +69,17 @@ def test_real_browser_fill_submit_redact_and_block(monkeypatch):
             {"op": "wait", "selector": "#done"},
             {"op": "text", "selector": "#done", "name": "result"}
         ]}}})
-    result = Engine(policy, Provider()).run("login")
-    assert submitted == [f"password={secret}"]
+    engine = Engine(policy, Provider())
+    if parallel == 1:
+        results = [engine.run("login")]
+    else:
+        import threading
+        results = []
+        threads = [threading.Thread(target=lambda: results.append(engine.run("login"))) for _ in range(parallel)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+    assert submitted == [f"password={secret}"] * parallel
     assert "https://blocked.invalid/track" in blocked
-    assert result == {"completed": True, "data": {"result": "[REDACTED]"}}
+    assert results == [{"completed": True, "data": {"result": "[REDACTED]"}}] * parallel

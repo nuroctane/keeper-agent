@@ -16,11 +16,15 @@ from .security import Denied, read_json, token_hash
 
 
 class Broker:
+    # Actions that may execute at once. Commander access is separately serialized.
+    concurrency = 4
+
     def __init__(self, state, policy, provider):
         self.state = state
         self.engine = Engine(policy, provider)
-        # Connections are concurrent; Commander state and browser actions are not.
-        self.running = threading.Lock()
+        self.slots = threading.BoundedSemaphore(self.concurrency)
+        self.vault = threading.Lock()
+        self.audit_lock = threading.Lock()
         self.reloading = threading.Lock()
         self.policy_path = state / "policy.json"
         self.status_path = state / "broker-status.json"
@@ -76,16 +80,26 @@ class Broker:
         clients = read_json(self.state / "clients.json")
         for name, client in clients.items():
             if hmac.compare_digest(client["sha256"], digest):
-                default_expiry = 0 if name.startswith("desktop-run-") else float("inf")
-                if client.get("expiresAt", default_expiry) <= time.time():
+                if not self.live(name, client):
                     raise Denied("Unauthorized")
                 return name, set(client["actions"])
         raise Denied("Unauthorized")
 
+    @staticmethod
+    def live(name, client):
+        default_expiry = 0 if name.startswith("desktop-run-") else float("inf")
+        return client.get("expiresAt", default_expiry) > time.time()
+
+    def granted(self, name, action):
+        # Rechecked when a queued run starts, so revoking a client also stops
+        # runs that were waiting for a slot, not only later requests.
+        client = read_json(self.state / "clients.json").get(name)
+        return bool(client) and self.live(name, client) and action in client["actions"]
+
     def audit(self, request_id, client, action, status):
         entry = {"time": datetime.now(timezone.utc).isoformat(), "id": request_id,
                  "client": client, "action": action, "status": status}
-        with (self.state / "audit.jsonl").open("a", encoding="utf-8") as stream:
+        with self.audit_lock, (self.state / "audit.jsonl").open("a", encoding="utf-8") as stream:
             stream.write(json.dumps(entry) + "\n")
             stream.flush()
 
@@ -101,15 +115,15 @@ class Broker:
         if not isinstance(name, str) or name not in allowed:
             raise Denied("Action not permitted")
         request_id = str(uuid.uuid4())
-        with self.running:
-            # Resolve the policy after waiting for the previous action, so an action
-            # removed or changed meanwhile is never run from a stale definition.
+        with self.slots:
+            # Resolve the policy and grant after waiting for a slot, so an action
+            # removed, changed or revoked meanwhile never runs from stale state.
             policy = self.current_policy()
-            if name not in policy["actions"]:
+            if name not in policy["actions"] or not self.granted(client, name):
                 raise Denied("Action not permitted")
             self.audit(request_id, client, name, "started")
             try:
-                result = self.engine.run(name, policy)
+                result = self.engine.run(name, policy, vault=self.vault)
             except Exception:
                 self.audit(request_id, client, name, "failed")
                 # SDK, HTTP and browser exceptions can include credentials or filled values.

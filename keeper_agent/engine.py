@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import os
 import subprocess
@@ -42,13 +43,20 @@ class Engine:
         self.policy = policy
         self.provider = provider
 
-    def run(self, name, policy=None):
+    def run(self, name, policy=None, vault=None):
         # The broker passes the policy it authorized against, so a concurrent
         # reload cannot swap the definition between the check and the run.
         policy = policy or self.policy
         if name not in policy["actions"]:
             raise Denied("Action not permitted")
         action = policy["actions"][name]
+        # Commander's session is not safe to share across threads. The vault lock
+        # covers only sync and secret reads; execution runs outside it.
+        with vault or contextlib.nullcontext():
+            secrets, redact = self.resolve(action)
+        return self.execute(action, secrets, redact)
+
+    def resolve(self, action):
         secrets = {}
         redact = []
         if action.get("secrets"):
@@ -60,6 +68,9 @@ class Engine:
                 value = (pyotp.parse_uri(value) if value.startswith("otpauth://") else pyotp.TOTP(value)).now()
                 redact.append(value)
             secrets[alias] = value
+        return secrets, redact
+
+    def execute(self, action, secrets, redact):
         # Redact complete auth headers too (including Basic user:password encodings).
         headers = render(action.get("headers", {}), secrets)
         redact.extend(v for k, v in headers.items() if k.lower() in {"authorization", "x-api-key"})

@@ -132,6 +132,7 @@ def test_broker_errors_never_echo_provider_exception(tmp_path):
         def get(self, ref):
             raise RuntimeError(SECRET)
     broker = Broker(tmp_path, policy(a), Broken())
+    grant(tmp_path, ["test"])
     with pytest.raises(Denied) as error:
         broker.invoke("agent", {"test"}, {"operation": "run", "action": "test"})
     assert SECRET not in str(error.value)
@@ -142,6 +143,7 @@ def test_broker_errors_never_echo_provider_exception(tmp_path):
 
 def test_client_cannot_supply_args_or_access_ungranted_action(tmp_path):
     broker = Broker(tmp_path, policy(command(tmp_path, "print(1)")), FakeProvider())
+    grant(tmp_path, ["test"])
     for body in [{"operation": "run", "action": "test", "argv": ["bad"]},
                  {"operation": "run", "action": "other"}, {"operation": "get", "record": "fixture"}]:
         with pytest.raises(Denied):
@@ -273,6 +275,7 @@ def test_broker_stays_reachable_while_an_action_runs(tmp_path):
     try:
         runs = [threading.Thread(target=call_client, args=(path, {"operation": "run", "action": "test"}))
                 for _ in range(2)]
+        began = time.monotonic()
         for run in runs:
             run.start()
         time.sleep(0.5)
@@ -283,8 +286,9 @@ def test_broker_stays_reachable_while_an_action_runs(tmp_path):
         for run in runs:
             run.join(timeout=15)
         statuses = [json.loads(line)["status"] for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
-        # Actions still execute one at a time.
-        assert statuses == ["started", "completed", "started", "completed"]
+        # Two 3-second actions overlap instead of queueing behind each other.
+        assert statuses == ["started", "started", "completed", "completed"]
+        assert time.monotonic() - began < 5.5
     finally:
         idle.close()
         server.shutdown()
@@ -300,7 +304,12 @@ def write_policy(state, actions):
     os.utime(path, ns=(previous + 10**9, previous + 10**9))
 
 
+def grant(state, actions):
+    (state / "clients.json").write_text(json.dumps({"agent": {"sha256": "unused", "actions": actions}}))
+
+
 def hot_broker(tmp_path):
+    grant(tmp_path, ["a", "b"])
     write_policy(tmp_path, {"a": command(tmp_path, "print('a1')"), "b": command(tmp_path, "print('b1')")})
     broker = Broker(tmp_path, policy(command(tmp_path, "print('ignored')")), FakeProvider())
     return broker, {"a", "b"}
@@ -341,15 +350,78 @@ def test_invalid_or_missing_policy_fails_closed(tmp_path):
 def test_queued_run_uses_the_policy_current_when_it_starts(tmp_path):
     broker, allowed = hot_broker(tmp_path)
     results = []
-    with broker.running:
-        waiting = threading.Thread(target=lambda: results.append(run(broker, allowed, "a")))
-        waiting.start()
-        write_policy(tmp_path, {"a": command(tmp_path, "print('a2')")})
+    for _ in range(Broker.concurrency):
+        broker.slots.acquire()
+    waiting = threading.Thread(target=lambda: results.append(run(broker, allowed, "a")))
+    waiting.start()
+    write_policy(tmp_path, {"a": command(tmp_path, "print('a2')")})
+    for _ in range(Broker.concurrency):
+        broker.slots.release()
     waiting.join(timeout=15)
     assert results == ["a2"]
 
 
 def test_in_memory_policy_is_not_replaced_without_a_file(tmp_path):
     broker = Broker(tmp_path, policy(command(tmp_path, "print('memory')")), FakeProvider())
+    grant(tmp_path, ["test"])
     assert run(broker, {"test"}, "test") == "memory"
     assert not (tmp_path / "broker-status.json").exists()
+
+
+def test_revoking_a_client_stops_its_queued_runs(tmp_path):
+    broker, allowed = hot_broker(tmp_path)
+    errors = []
+    def attempt():
+        try:
+            run(broker, allowed, "a")
+        except Denied as error:
+            errors.append(str(error))
+    for _ in range(Broker.concurrency):
+        broker.slots.acquire()
+    waiting = threading.Thread(target=attempt)
+    waiting.start()
+    grant(tmp_path, [])
+    for _ in range(Broker.concurrency):
+        broker.slots.release()
+    waiting.join(timeout=15)
+    assert errors == ["Action not permitted"]
+    assert not (tmp_path / "audit.jsonl").exists()
+
+
+def test_actions_overlap_up_to_the_cap_while_vault_reads_stay_serial(tmp_path):
+    import time
+    lock = threading.Lock()
+    counts = {"vault": 0, "vault_max": 0, "running": 0, "running_max": 0}
+
+    def track(key, step):
+        with lock:
+            counts[key] += step
+            counts[key + "_max"] = max(counts[key + "_max"], counts[key])
+
+    class SlowVault(FakeProvider):
+        def get(self, ref):
+            track("vault", 1)
+            time.sleep(0.05)
+            track("vault", -1)
+            return SECRET
+
+    broker = Broker(tmp_path, policy(command(tmp_path, "print(1)")), SlowVault())
+    grant(tmp_path, ["test"])
+    execute = broker.engine.execute
+
+    def slow_execute(*args):
+        track("running", 1)
+        time.sleep(0.4)
+        track("running", -1)
+        return execute(*args)
+
+    broker.engine.execute = slow_execute
+    runs = [threading.Thread(target=run, args=(broker, {"test"}, "test")) for _ in range(Broker.concurrency + 2)]
+    for thread in runs:
+        thread.start()
+    for thread in runs:
+        thread.join(timeout=20)
+    assert counts["vault_max"] == 1
+    assert counts["running_max"] == Broker.concurrency
+    lines = (tmp_path / "audit.jsonl").read_text().splitlines()
+    assert len(lines) == 2 * (Broker.concurrency + 2) and all(json.loads(line) for line in lines)
