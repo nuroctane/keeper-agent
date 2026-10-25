@@ -13,7 +13,7 @@ The native administrator app uses dark charcoal and gold by default, with light 
 5. For browser workflows, choose **Settings → Install browser** once. This opens a terminal that installs the matching Playwright Chromium in the broker account's cache. Wait for it to finish. Browser downloads are separate from the installer.
 6. Grant each agent specific actions. Transfer only its generated client file privately to that agent account. Tokens are not displayed by the UI.
 
-Changes to policy require restarting the terminal broker. Client grants and revocations apply to subsequent requests immediately. Use Ctrl+C in the terminal to disconnect. Closing the administrator window does not stop a separately running broker. Action execution always requires an explicit confirmation.
+A running broker applies policy changes within a few seconds; no restart is needed. Client grants and revocations apply to subsequent requests immediately. Use Ctrl+C in the terminal to disconnect. Closing the administrator window does not stop a separately running broker. Action execution always requires an explicit confirmation.
 
 The simple API form returns status only. Commands suppress output by default. Browser forms wait for a configured success element; selectors and MFA behavior must match your site.
 

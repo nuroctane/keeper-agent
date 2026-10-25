@@ -37,7 +37,7 @@ On macOS/Linux, use `.venv/bin/python` and private paths appropriate to your acc
 ## Use the web app
 
 - **Vault connection:** create a workspace or select an existing broker-host path. Connect Keeper, enter your master password, complete device approval and MFA, or disconnect. Credentials are submitted only through this authenticated session to the broker; the isolated login process passes them to Keeper and never sends them back as UI output.
-- **Actions:** search/filter actions; create API requests, fixed commands, and browser workflows; edit the full policy; confirm and run actions; inspect bounded results; delete ungranted actions. Changes persist on disk. Disconnect and reconnect Keeper to load policy changes.
+- **Actions:** search/filter actions; create API requests, fixed commands, and browser workflows; edit the full policy; confirm and run actions; inspect bounded results; delete ungranted actions. Changes persist on disk, and a connected broker applies them within a few seconds without reconnecting.
 - **Agent access:** create scoped grants, download the generated client file explicitly, and revoke access. Downloads contain a capability token and pinned certificate; transfer them privately to the intended agent account. The agent API remains loopback-only. A remote web administrator does not turn it into a public agent endpoint.
 - **Activity:** view and filter recent action metadata. Secret values and action output are not written to the audit log.
 - **Settings:** light/dark/system appearance, broker-host folder selection, and background Chromium installation with status. Folder selection lasts for this server process; use the desired `--state` on later launches.

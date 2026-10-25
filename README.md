@@ -109,7 +109,7 @@ For a TOTP secret stored in Keeper, add a secret reference with `"field": "oneTi
 
 ## Policy and operations
 
-- Policy is loaded once at startup; restart the broker to apply edits. Client grants are reloaded on every request.
+- The broker applies `policy.json` edits without a restart: it checks the file before each request and about once a second. Each action runs against the policy it was authorized with. If the file becomes invalid or missing, the broker refuses every action until it is valid again, so a broken edit cannot leave a removed action live. Client grants are reloaded on every request.
 - Each client gets an explicit list of named actions. There are no wildcard grants. A token is a capability to repeat those actions; use read-only, narrowly scoped upstream credentials where possible.
 - The broker accepts connections concurrently, so listing actions and status checks stay responsive, but actions run one at a time against a single Keeper session. This is a local tool for a small number of agents, not a multi-tenant internet service.
 - HTTP and browser output is capped at 256 KiB. Commands have a bounded runtime and output size. Tracked command descendants are terminated on completion/timeout, but process cleanup is not a containment boundary for malicious executables.

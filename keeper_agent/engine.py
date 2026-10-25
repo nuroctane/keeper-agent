@@ -42,10 +42,13 @@ class Engine:
         self.policy = policy
         self.provider = provider
 
-    def run(self, name):
-        if name not in self.policy["actions"]:
+    def run(self, name, policy=None):
+        # The broker passes the policy it authorized against, so a concurrent
+        # reload cannot swap the definition between the check and the run.
+        policy = policy or self.policy
+        if name not in policy["actions"]:
             raise Denied("Action not permitted")
-        action = self.policy["actions"][name]
+        action = policy["actions"][name]
         secrets = {}
         redact = []
         if action.get("secrets"):

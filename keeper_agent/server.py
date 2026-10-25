@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .engine import Engine
+from .policy import validate
 from .security import Denied, read_json, token_hash
 
 
@@ -20,6 +21,53 @@ class Broker:
         self.engine = Engine(policy, provider)
         # Connections are concurrent; Commander state and browser actions are not.
         self.running = threading.Lock()
+        self.reloading = threading.Lock()
+        self.policy_path = state / "policy.json"
+        self.status_path = state / "broker-status.json"
+        # Hot reload watches the file the broker started from; the first refresh
+        # rereads it so an edit made during startup is not missed. A broker built
+        # from an in-memory policy (no file) keeps that policy.
+        self.policy_stamp = "startup" if self.policy_path.exists() else None
+        self.policy_error = False
+
+    def stamp(self):
+        try:
+            info = self.policy_path.stat()
+            return info.st_mtime_ns, info.st_size
+        except FileNotFoundError:
+            return "missing"
+
+    def publish_status(self):
+        from .cli import replace_private
+        from .desktop import policy_digest
+        replace_private(self.status_path, {"policyDigest": None if self.policy_error
+                                           else policy_digest(self.engine.policy)})
+
+    def refresh(self):
+        """Apply policy.json edits without a restart. An invalid or missing file fails
+        closed: no action runs until it is valid again, so a broken edit can never
+        leave a removed action live."""
+        if self.policy_stamp is None:
+            return
+        with self.reloading:
+            stamp = self.stamp()
+            if stamp == self.policy_stamp:
+                return
+            self.policy_stamp = stamp
+            try:
+                policy = validate(read_json(self.policy_path))
+            except Exception:
+                self.policy_error = True
+            else:
+                self.engine.policy = policy
+                self.policy_error = False
+            self.publish_status()
+
+    def current_policy(self):
+        self.refresh()
+        if self.policy_error:
+            raise Denied("Broker policy is invalid; fix policy.json")
+        return self.engine.policy
 
     def authenticate(self, token):
         if not isinstance(token, str) or not 32 <= len(token) <= 200:
@@ -42,21 +90,26 @@ class Broker:
             stream.flush()
 
     def invoke(self, client, allowed, body):
-        actions = self.engine.policy["actions"]
         if body == {"operation": "list"}:
+            actions = self.current_policy()["actions"]
             return {"actions": [{"name": name, "kind": actions[name]["kind"],
                                   "description": actions[name].get("description", "")}
                                  for name in sorted(allowed & actions.keys())]}
         if not isinstance(body, dict) or set(body) != {"operation", "action"} or body["operation"] != "run":
             raise Denied("Expected a named action; custom arguments are not accepted")
         name = body["action"]
-        if not isinstance(name, str) or name not in allowed or name not in actions:
+        if not isinstance(name, str) or name not in allowed:
             raise Denied("Action not permitted")
         request_id = str(uuid.uuid4())
         with self.running:
+            # Resolve the policy after waiting for the previous action, so an action
+            # removed or changed meanwhile is never run from a stale definition.
+            policy = self.current_policy()
+            if name not in policy["actions"]:
+                raise Denied("Action not permitted")
             self.audit(request_id, client, name, "started")
             try:
-                result = self.engine.run(name)
+                result = self.engine.run(name, policy)
             except Exception:
                 self.audit(request_id, client, name, "failed")
                 # SDK, HTTP and browser exceptions can include credentials or filled values.
@@ -169,16 +222,27 @@ def serve(state, policy, provider, ready=None):
     tls.load_cert_chain(state / "server.crt", state / "server.key")
     config = read_json(state / "server.json")
     broker = Broker(state, policy, provider)
+    stopped = threading.Event()
+
+    def watch():
+        # Publish policy edits promptly so the administrator sees them applied,
+        # not only when the next agent request arrives.
+        while not stopped.wait(1):
+            try:
+                broker.refresh()
+            except OSError:
+                pass
+
     with LocalServer(config["port"], handler_for(broker), tls) as server:
-        from .desktop import policy_digest
-        from .cli import replace_private
-        status_path = state / "broker-status.json"
-        replace_private(status_path, {"policyDigest": policy_digest(policy)})
+        broker.refresh()
+        broker.publish_status()
         print(f"Keeper Agent listening on https://127.0.0.1:{server.server_port}. Ctrl+C to lock.", flush=True)
+        threading.Thread(target=watch, daemon=True).start()
         if ready:
             ready()
         try:
             server.serve_forever()
         finally:
+            stopped.set()
             provider.close()
-            status_path.unlink(missing_ok=True)
+            broker.status_path.unlink(missing_ok=True)

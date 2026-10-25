@@ -129,6 +129,11 @@
       error = String(e);
     }
   }
+  // After a policy edit, read the workspace once more when the broker has had
+  // time to apply it. A single follow-up to the user's own save, not polling.
+  function confirmPolicyApplied() {
+    if (data.online && data.pendingRestart) setTimeout(snapshotRefresh, 1500);
+  }
   // Keep operations explicit: no background polling, retries, or automatic runs.
   async function perform(job: () => Promise<void>) {
     busy = true;
@@ -246,7 +251,8 @@
       });
       selected = actionName;
       modal = null;
-      message = 'Action saved. Restart a running broker to apply policy changes.';
+      message = 'Action saved. A running broker applies it within a few seconds.';
+      confirmPolicyApplied();
     });
   }
   async function setup() {
@@ -313,6 +319,7 @@
       modal = null;
       if (selected === target) selected = data.actions[0]?.name || '';
       message = 'Changes saved.';
+      confirmPolicyApplied();
     });
   }
   async function run() {
@@ -446,8 +453,8 @@
       {#if data.pendingRestart}<div class="notice warn">
           <Icon name="info" size={18} /><span
             >{web
-              ? 'Policy changed. Disconnect and reconnect Keeper in Vault connection before running actions.'
-              : 'Policy changed. Restart the broker in its private terminal before running actions.'}</span
+              ? 'The broker has not applied the latest policy yet. Refresh in a few seconds; if this stays, disconnect and reconnect Keeper in Vault connection.'
+              : 'The broker has not applied the latest policy yet. Refresh in a few seconds; if this stays, restart the broker in its private terminal.'}</span
           >
         </div>{/if}
       <div class="page-heading">

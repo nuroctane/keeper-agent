@@ -290,3 +290,66 @@ def test_broker_stays_reachable_while_an_action_runs(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def write_policy(state, actions):
+    # Distinct mtimes make each edit observable even on coarse filesystem clocks.
+    path = state / "policy.json"
+    previous = path.stat().st_mtime_ns if path.exists() else 0
+    path.write_text(json.dumps({"version": 1, "actions": actions}))
+    os.utime(path, ns=(previous + 10**9, previous + 10**9))
+
+
+def hot_broker(tmp_path):
+    write_policy(tmp_path, {"a": command(tmp_path, "print('a1')"), "b": command(tmp_path, "print('b1')")})
+    broker = Broker(tmp_path, policy(command(tmp_path, "print('ignored')")), FakeProvider())
+    return broker, {"a", "b"}
+
+
+def run(broker, allowed, name):
+    return broker.invoke("agent", allowed, {"operation": "run", "action": name})["result"]["output"].strip()
+
+
+def test_policy_edits_apply_without_restart(tmp_path):
+    from keeper_agent.desktop import policy_digest
+    broker, allowed = hot_broker(tmp_path)
+    assert run(broker, allowed, "a") == "a1"
+    write_policy(tmp_path, {"b": command(tmp_path, "print('b2')")})
+    with pytest.raises(Denied, match="not permitted"):
+        run(broker, allowed, "a")
+    assert run(broker, allowed, "b") == "b2"
+    assert [x["name"] for x in broker.invoke("agent", allowed, {"operation": "list"})["actions"]] == ["b"]
+    status = json.loads((tmp_path / "broker-status.json").read_text())
+    assert status["policyDigest"] == policy_digest(json.loads((tmp_path / "policy.json").read_text()))
+
+
+def test_invalid_or_missing_policy_fails_closed(tmp_path):
+    broker, allowed = hot_broker(tmp_path)
+    assert run(broker, allowed, "a") == "a1"
+    (tmp_path / "policy.json").write_text("{not json")
+    for body in ({"operation": "run", "action": "a"}, {"operation": "list"}):
+        with pytest.raises(Denied, match="policy is invalid"):
+            broker.invoke("agent", allowed, body)
+    assert json.loads((tmp_path / "broker-status.json").read_text())["policyDigest"] is None
+    (tmp_path / "policy.json").unlink()
+    with pytest.raises(Denied, match="policy is invalid"):
+        run(broker, allowed, "a")
+    write_policy(tmp_path, {"a": command(tmp_path, "print('a3')")})
+    assert run(broker, allowed, "a") == "a3"
+
+
+def test_queued_run_uses_the_policy_current_when_it_starts(tmp_path):
+    broker, allowed = hot_broker(tmp_path)
+    results = []
+    with broker.running:
+        waiting = threading.Thread(target=lambda: results.append(run(broker, allowed, "a")))
+        waiting.start()
+        write_policy(tmp_path, {"a": command(tmp_path, "print('a2')")})
+    waiting.join(timeout=15)
+    assert results == ["a2"]
+
+
+def test_in_memory_policy_is_not_replaced_without_a_file(tmp_path):
+    broker = Broker(tmp_path, policy(command(tmp_path, "print('memory')")), FakeProvider())
+    assert run(broker, {"test"}, "test") == "memory"
+    assert not (tmp_path / "broker-status.json").exists()

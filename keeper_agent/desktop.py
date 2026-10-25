@@ -183,8 +183,14 @@ def dispatch(request):
         current = snapshot(state)
         if not current["online"]:
             raise Denied("The broker is not connected. Connect Keeper first.")
+        # A current broker applies policy edits within about a second; give it
+        # that long before concluding it is an older build that needs a restart.
+        deadline = time.monotonic() + 3
+        while current["pendingRestart"] and time.monotonic() < deadline:
+            time.sleep(0.25)
+            current = snapshot(state)
         if current["pendingRestart"]:
-            raise Denied("Restart the broker to apply the latest policy before running")
+            raise Denied("The broker has not applied the latest policy. Restart it before running.")
         client_name = "desktop-run-" + uuid.uuid4().hex
         filename = state / f"{client_name}-client.json"
         try:
