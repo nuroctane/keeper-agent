@@ -110,6 +110,14 @@ class Worker:
             self.status = {"state": "failed", "error": "Task timed out. Start again."} if expired else {"state": "idle"}
         if proc:
             import psutil
+            # Closing stdin asks the worker to stop on its own, which logs out of
+            # Keeper and removes its status file. Force it only if it lingers.
+            try:
+                if proc.stdin:
+                    proc.stdin.close()
+                proc.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
             try:
                 if proc.poll() is None:
                     parent = psutil.Process(proc.pid)
@@ -122,12 +130,11 @@ class Worker:
                         child.kill()
             except psutil.NoSuchProcess:
                 pass
-            for stream in (proc.stdin, proc.stdout):
-                if stream:
-                    try:
-                        stream.close()
-                    except OSError:
-                        pass
+            if proc.stdout:
+                try:
+                    proc.stdout.close()
+                except OSError:
+                    pass
 
 
 class WebAdmin:

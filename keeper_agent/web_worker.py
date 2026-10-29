@@ -10,6 +10,7 @@ import logging
 import os
 from pathlib import Path
 import sys
+import threading
 import uuid
 
 from .security import Denied, read_json
@@ -104,6 +105,18 @@ class BrowserLoginUi:
         raise Denied("SSO data-key approval requires the private terminal.")
 
 
+def watch_parent(stream, stop):
+    """The web server holds this process's stdin open. End of input means it has
+    exited, however abruptly, so stop serving and log out of Keeper instead of
+    leaving an owner-level session running with nobody in control."""
+    try:
+        while stream.readline(65537):
+            pass
+    except (OSError, ValueError):
+        pass
+    stop.set()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", type=Path)
@@ -143,9 +156,16 @@ def main(argv=None):
             from .policy import validate
             from .server import serve
             provider = KeeperProvider(args.state / "keeper.json", BrowserLoginUi(emit, receive))
+            stop = threading.Event()
+
+            def connected():
+                emit({"state": "connected"})
+                # Login challenges are over, so stdin is now only a lifeline.
+                threading.Thread(target=watch_parent, args=(sys.stdin, stop), daemon=True).start()
+
             try:
                 serve(args.state, validate(read_json(args.state / "policy.json")), provider,
-                      ready=lambda: emit({"state": "connected"}))
+                      ready=connected, stop=stop)
             finally:
                 provider.close()
         except Denied as error:

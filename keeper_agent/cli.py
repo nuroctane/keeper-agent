@@ -124,7 +124,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Use approved actions backed by a Keeper Personal vault")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("web", help="Serve the authenticated browser administrator (web --help)")
-    for name in ("init", "serve", "client-add", "client-revoke", "doctor"):
+    for name in ("init", "serve", "client-add", "client-revoke", "doctor", "audit-verify"):
         command = sub.add_parser(name)
         command.add_argument("--state", type=Path, required=True, help="Private directory owned by the broker account")
         if name == "init":
@@ -167,6 +167,11 @@ def main(argv=None):
             print(json.dumps({"policy_valid": True, "actions": len(policy["actions"]),
                               "isolation": "Requires separate OS account and protected code, policy, scripts and state",
                               "keeper_connected": "Not checked; serve performs interactive login"}, indent=2))
+        elif args.command == "audit-verify":
+            from .audit import verify
+            count, problem = verify(args.state.resolve())
+            print(json.dumps({"entries": count, "intact": problem is None, "problem": problem}, indent=2))
+            return 0 if problem is None else 1
         elif args.command == "serve":
             from .provider import KeeperProvider
             from .server import serve

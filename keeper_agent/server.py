@@ -10,6 +10,7 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .audit import AuditLog
 from .engine import Engine
 from .policy import validate
 from .security import Denied, read_json, token_hash
@@ -24,7 +25,7 @@ class Broker:
         self.engine = Engine(policy, provider)
         self.slots = threading.BoundedSemaphore(self.concurrency)
         self.vault = threading.Lock()
-        self.audit_lock = threading.Lock()
+        self.audit_log = AuditLog(state)
         self.reloading = threading.Lock()
         self.policy_path = state / "policy.json"
         self.status_path = state / "broker-status.json"
@@ -97,11 +98,8 @@ class Broker:
         return bool(client) and self.live(name, client) and action in client["actions"]
 
     def audit(self, request_id, client, action, status):
-        entry = {"time": datetime.now(timezone.utc).isoformat(), "id": request_id,
-                 "client": client, "action": action, "status": status}
-        with self.audit_lock, (self.state / "audit.jsonl").open("a", encoding="utf-8") as stream:
-            stream.write(json.dumps(entry) + "\n")
-            stream.flush()
+        self.audit_log.append({"time": datetime.now(timezone.utc).isoformat(), "id": request_id,
+                               "client": client, "action": action, "status": status})
 
     def invoke(self, client, allowed, body):
         if body == {"operation": "list"}:
@@ -230,7 +228,8 @@ class LocalServer(ThreadingHTTPServer):
         pass
 
 
-def serve(state, policy, provider, ready=None):
+def serve(state, policy, provider, ready=None, stop=None):
+    """Serve until Ctrl+C, or until ``stop`` (a threading.Event) is set."""
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(state / "server.crt", state / "server.key")
@@ -252,6 +251,8 @@ def serve(state, policy, provider, ready=None):
         broker.publish_status()
         print(f"Keeper Agent listening on https://127.0.0.1:{server.server_port}. Ctrl+C to lock.", flush=True)
         threading.Thread(target=watch, daemon=True).start()
+        if stop is not None:
+            threading.Thread(target=lambda: (stop.wait(), server.shutdown()), daemon=True).start()
         if ready:
             ready()
         try:
