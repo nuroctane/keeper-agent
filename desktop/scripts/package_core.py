@@ -8,7 +8,7 @@ assets = root / "desktop" / "dist"
 if not (assets / "index.html").is_file():
     raise SystemExit("Build the shared interface first: cd desktop && npm run build")
 subprocess.run([
-    sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir",
+    sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "--onedir",
     "--name", "keeper-agent-core", "--paths", str(root),
     "--distpath", str(root / "work" / "sidecar"),
     "--workpath", str(root / "work" / "pyinstaller"),

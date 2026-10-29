@@ -8,7 +8,12 @@ export type Action = {
   timeout: number;
   grants: number;
 };
-export type Client = { name: string; actions: string[] };
+export type Client = {
+  name: string;
+  actions: string[];
+  expiresAt?: number | null;
+  expired?: boolean;
+};
 export type Event = { id: string; time: string; client: string; action: string; status: string };
 export type Snapshot = {
   initialized: boolean;

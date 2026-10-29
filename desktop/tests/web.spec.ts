@@ -25,7 +25,11 @@ test('authenticated browser uses real persisted policy, TLS broker, grants, down
   await page.getByRole('button', { name: 'Add agent', exact: true }).click();
   await page.getByLabel('Agent name', { exact: true }).fill('web-agent');
   await page.getByRole('checkbox', { name: /web-created/ }).check();
+  await page.getByLabel('Access lasts').selectOption('86400');
   await page.getByRole('button', { name: 'Create agent access' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Access expires in 24 hours.');
+  await expect(page.locator('.result-output')).toContainText('keeper-agent status');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   const row = page.locator('.agent-row').filter({ hasText: 'web-agent' });
   const downloaded = page.waitForEvent('download');
   await row.getByRole('button', { name: 'Download client' }).click();

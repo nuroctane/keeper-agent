@@ -86,6 +86,17 @@ def test_bounded_audit_rejects_extra_fields_and_partial_lines(state):
     assert "never-return" not in json.dumps(result)
 
 
+def test_activity_keeps_recent_history_across_audit_rotation(state):
+    from keeper_agent.audit import AuditLog
+    log = AuditLog(state, limit=400)
+    for index in range(25):
+        log.append({"id": str(index), "client": "agent", "action": "check",
+                    "status": "completed", "time": "2026-10-29", "extra": "not-for-the-ui"})
+    events = audit_tail(state)
+    assert [event["id"] for event in events] == [str(i) for i in reversed(range(25))]
+    assert "not-for-the-ui" not in json.dumps(events)
+
+
 def test_failed_run_is_cleaned_up(state, monkeypatch):
     req(state, "save_action", name="check", action=action(state))
     monkeypatch.setattr("keeper_agent.desktop.online", lambda _: True)

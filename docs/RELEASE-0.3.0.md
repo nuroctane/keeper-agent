@@ -1,5 +1,7 @@
 # Development build 0.3.0
 
+These packages are historical. They predate the October 25–29 broker hardening, policy hot-reload, concurrent actions, shared vault refreshes, clean shutdown, and audit chaining/rotation. The [0.3.1 Windows development builds](RELEASE-0.3.1.md) include those changes. macOS packages still need rebuilding.
+
 Artifacts verified October 8, 2026. All four packages were built from source commit `c16e052` in the private [Windows/macOS CI run](https://github.com/nuroctane/keeper-agent/actions/runs/37671696574). CI artifacts may expire; verified local copies are in this chat's `outputs` folder, with build copies under the lab's ignored `work/releases/0.3.0` directory.
 
 | Package | Size | Purpose |

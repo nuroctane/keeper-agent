@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=84.1.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "keeper-agent-local"
-version = "0.3.0"
+version = "0.3.2"
 description = "Policy-controlled local broker for a Keeper Personal vault"
 requires-python = ">=3.11"
-dependencies = ["httpx>=0.28,<0.29", "cryptography>=46", "pyotp>=2.9,<3", "psutil>=7,<8"]
+dependencies = ["httpx>=0.28,<0.29", "certifi>=2026.10.19", "cryptography>=46", "pyotp>=2.9,<3", "psutil>=7,<8"]
 
 [project.optional-dependencies]
 keeper = ["keepercommander>=18,<19"]

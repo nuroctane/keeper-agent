@@ -77,7 +77,8 @@ async fn desktop_request(
     let operation = request
         .get("operation")
         .and_then(Value::as_str)
-        .ok_or("Invalid operation")?;
+        .ok_or("Invalid operation")?
+        .to_owned();
     if ![
         "snapshot",
         "initialize",
@@ -88,7 +89,7 @@ async fn desktop_request(
         "revoke_client",
         "run",
     ]
-    .contains(&operation)
+    .contains(&operation.as_str())
     {
         return Err("Unsupported operation".into());
     }
@@ -143,15 +144,20 @@ async fn desktop_request(
         if response.get("ok") == Some(&Value::Bool(true)) {
             Ok(response["data"].clone())
         } else {
-            Err(response["error"]
-                .as_str()
-                .unwrap_or("Operation failed")
-                .to_owned())
+            let error = response["error"].as_str().unwrap_or("Operation failed");
+            let hint = response["hint"].as_str().unwrap_or("");
+            Err(if hint.is_empty() {
+                error.to_owned()
+            } else {
+                format!("{error} {hint}")
+            })
         }
     };
     tokio::time::timeout(Duration::from_secs(345), task)
         .await
-        .map_err(|_| "Operation timed out".to_string())?
+        .map_err(|_| if operation == "run" {
+            "Operation timed out. The action may have run; check the destination before repeating.".to_string()
+        } else { "Operation timed out".to_string() })?
 }
 
 #[tauri::command]
@@ -212,7 +218,10 @@ mod tests {
             powershell_quote("a\u{2019}; calc; \u{2018}b"),
             "'a\u{2019}\u{2019}; calc; \u{2018}\u{2018}b'"
         );
-        assert_eq!(powershell_quote("\u{201A}\u{201B}"), "'\u{201A}\u{201A}\u{201B}\u{201B}'");
+        assert_eq!(
+            powershell_quote("\u{201A}\u{201B}"),
+            "'\u{201A}\u{201A}\u{201B}\u{201B}'"
+        );
     }
 }
 

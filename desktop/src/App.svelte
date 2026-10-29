@@ -16,7 +16,7 @@
   import { emptySnapshot, type Snapshot, type Kind, type PolicyAction } from './types';
 
   type Page = 'actions' | 'agents' | 'activity' | 'vault' | 'settings';
-  type Modal = 'action' | 'agent' | 'run' | 'revoke' | 'delete' | 'folder' | null;
+  type Modal = 'action' | 'agent' | 'client' | 'run' | 'revoke' | 'delete' | 'folder' | null;
   let page = $state<Page>('actions');
   let data = $state<Snapshot>(emptySnapshot());
   let loading = $state(true);
@@ -50,8 +50,13 @@
   let editorJson = $state('');
   let agentName = $state('');
   let grants = $state<string[]>([]);
+  let accessDuration = $state('604800');
+  let clientPath = $state('');
+  let instructionsCopied = $state(false);
+  let testedAction = $state('');
   let target = $state('');
   let result = $state('');
+  let resultSummary = $state('');
   let folderPath = $state('');
   let email = $state('');
   let region = $state('US');
@@ -100,8 +105,21 @@
     localStorage.setItem('keeper-agent-theme', theme);
   });
   $effect(() => {
-    if (dialog && !dialog.open) dialog.showModal();
+    const mode = modal;
+    if (dialog && mode) {
+      if (!dialog.open) dialog.showModal();
+      const initialFocus =
+        dialog.querySelector<HTMLElement>(
+          'input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+        ) ?? dialog.querySelector<HTMLElement>('#workspace-dialog-title');
+      initialFocus?.focus();
+    }
   });
+  function closeModal() {
+    // Closing the native dialog before removing it restores keyboard focus.
+    dialog?.close();
+    modal = null;
+  }
 
   onMount(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
@@ -250,7 +268,8 @@
         replace: editing,
       });
       selected = actionName;
-      modal = null;
+      testedAction = '';
+      closeModal();
       message = 'Action saved. A running broker applies it within a few seconds.';
       confirmPolicyApplied();
     });
@@ -279,7 +298,7 @@
     await perform(async () => {
       data = await request('select_state', { path: folderPath });
       selected = data.actions[0]?.name || '';
-      modal = null;
+      closeModal();
       message = 'Workspace selected for this server session.';
     });
   }
@@ -305,10 +324,12 @@
       const response = await request<{ snapshot: Snapshot; path: string }>('create_client', {
         name: agentName,
         actions: grants,
+        expiresIn: accessDuration === 'never' ? null : Number(accessDuration),
       });
       data = response.snapshot;
-      modal = null;
-      message = `Access created. Client file: ${response.path}. Transfer only this file to the agent’s account.`;
+      clientPath = response.path;
+      modal = 'client';
+      go('agents');
     });
   }
   async function confirm() {
@@ -316,7 +337,7 @@
       data = await request(modal === 'revoke' ? 'revoke_client' : 'delete_action', {
         name: target,
       });
-      modal = null;
+      closeModal();
       if (selected === target) selected = data.actions[0]?.name || '';
       message = 'Changes saved.';
       confirmPolicyApplied();
@@ -324,10 +345,61 @@
   }
   async function run() {
     await perform(async () => {
-      const response = await request<unknown>('run', { name: target });
+      testedAction = '';
+      const response = await request<{
+        result: { status?: number; exit_code?: number; completed?: boolean };
+        warning?: string;
+      }>('run', { name: target });
       result = JSON.stringify(response, null, 2);
+      const outcome = response.result;
+      resultSummary =
+        outcome.status !== undefined
+          ? `HTTP ${outcome.status}`
+          : outcome.exit_code !== undefined
+            ? outcome.exit_code === 0
+              ? 'Command completed.'
+              : `Command exited with code ${outcome.exit_code}.`
+            : outcome.completed === true
+              ? 'Browser steps completed.'
+              : 'Check the result before continuing.';
+      if (response.warning) resultSummary += ` ${response.warning}`;
+      if (
+        outcome.exit_code === 0 ||
+        outcome.completed === true ||
+        (outcome.status !== undefined && outcome.status >= 200 && outcome.status < 300)
+      )
+        testedAction = target;
       await snapshotRefresh();
     });
+  }
+  function openAgent(actions: string[] = []) {
+    agentName = '';
+    grants = actions;
+    accessDuration = '604800';
+    instructionsCopied = false;
+    formError = '';
+    modal = 'agent';
+  }
+  function accessLabel(client: Snapshot['clients'][number]) {
+    if (client.expired || (client.expiresAt && client.expiresAt * 1000 <= Date.now()))
+      return 'Expired';
+    return client.expiresAt
+      ? `Until ${new Date(client.expiresAt * 1000).toLocaleDateString()}`
+      : 'Until revoked';
+  }
+  function agentCommands() {
+    const path = `./${agentName}-client.json`;
+    return `keeper-agent status --client "${path}"\nkeeper-agent list --client "${path}"`;
+  }
+  async function copyInstructions() {
+    try {
+      await navigator.clipboard.writeText(agentCommands());
+      instructionsCopied = true;
+      message = 'Agent commands copied. Run them from the folder containing the client file.';
+    } catch {
+      formError =
+        'Copy the commands below and run them from the folder containing the client file.';
+    }
   }
   function timeAgo(time: string) {
     const seconds = Math.max(0, Math.round((Date.now() - Date.parse(time)) / 1000));
@@ -480,12 +552,7 @@
           >{:else if page === 'agents'}<button
             class="button primary"
             disabled={!data.initialized || !data.actions.length}
-            onclick={() => {
-              agentName = '';
-              grants = [];
-              formError = '';
-              modal = 'agent';
-            }}><Icon name="plus" size={17} />Add agent</button
+            onclick={() => openAgent()}><Icon name="plus" size={17} />Add agent</button
           >{/if}
       </div>
 
@@ -536,6 +603,38 @@
             </div>
           </section>
         {:else}
+          {#if !data.clients.length}<section class="getting-started" aria-label="Get started">
+              <div>
+                <strong
+                  >{!data.online
+                    ? '1. Connect Keeper'
+                    : !data.actions.length
+                      ? '2. Create your first action'
+                      : !testedAction
+                        ? '2. Test an action'
+                        : '3. Give your agent access'}</strong
+                >
+                <p>
+                  {!data.online
+                    ? 'Connect your vault to test an action before sharing it.'
+                    : !data.actions.length
+                      ? 'Choose what your agent can do. Credentials stay behind the broker.'
+                      : !testedAction
+                        ? 'Select an action and run it once to check the result. This performs the real action.'
+                        : 'Grant the tested action and copy the commands for your agent.'}
+                </p>
+              </div>
+              {#if !data.online}<button class="button secondary" onclick={() => go('vault')}
+                  >Connect Keeper</button
+                >
+              {:else if !data.actions.length}<button class="button secondary" onclick={openNew}
+                  >Create an action</button
+                >
+              {:else if testedAction}<button
+                  class="button secondary"
+                  onclick={() => openAgent([testedAction])}>Give agent access</button
+                >{/if}
+            </section>{/if}
           <div class="action-layout" class:has-selection={!!current}>
             <section class="action-list" aria-label="Approved actions">
               <div class="list-toolbar">
@@ -686,7 +785,9 @@
                   {#each client.actions as a}<span>{a}</span>{/each}
                 </div>
               </div>
-              <span class="badge success">Access granted</span>
+              <span class="badge" class:success={!client.expired} class:failure={client.expired}
+                >{accessLabel(client)}</span
+              >
               {#if web}<button
                   class="button secondary"
                   disabled={busy}
@@ -958,6 +1059,8 @@
 
 {#if modal}<dialog
     bind:this={dialog}
+    aria-labelledby="workspace-dialog-title"
+    aria-describedby={formError ? 'dialog-form-error' : undefined}
     onclose={() => {
       if (!busy) modal = null;
     }}
@@ -969,31 +1072,30 @@
     <div class="dialog-header">
       <div>
         <span class="eyebrow">WORKSPACE CONTROL</span>
-        <h2>
+        <h2 id="workspace-dialog-title" tabindex="-1">
           {modal === 'action'
             ? editing
               ? 'Edit action policy'
               : 'Create an action'
             : modal === 'agent'
               ? 'Add an agent'
-              : modal === 'run'
-                ? `Run ${target}`
-                : modal === 'revoke'
-                  ? 'Revoke agent access?'
-                  : modal === 'folder'
-                    ? 'Choose a broker folder'
-                    : 'Delete this action?'}
+              : modal === 'client'
+                ? 'Your agent is ready to connect'
+                : modal === 'run'
+                  ? `Run ${target}`
+                  : modal === 'revoke'
+                    ? 'Revoke agent access?'
+                    : modal === 'folder'
+                      ? 'Choose a broker folder'
+                      : 'Delete this action?'}
         </h2>
       </div>
-      <button
-        class="icon-button"
-        aria-label="Close dialog"
-        disabled={busy}
-        onclick={() => (modal = null)}><Icon name="close" size={20} /></button
+      <button class="icon-button" aria-label="Close dialog" disabled={busy} onclick={closeModal}
+        ><Icon name="close" size={20} /></button
       >
     </div>
     <div class="dialog-body">
-      {#if formError}<div class="notice error" role="alert">
+      {#if formError}<div id="dialog-form-error" class="notice error" role="alert">
           <Icon name="info" size={16} /><span>{formError}</span>
         </div>{/if}
       {#if modal === 'action'}<div class="form-grid">
@@ -1148,6 +1250,12 @@
       {:else if modal === 'agent'}<label
           >Agent name<input placeholder="codex" bind:value={agentName} /></label
         >
+        <label
+          >Access lasts<select bind:value={accessDuration}>
+            <option value="3600">1 hour</option><option value="86400">24 hours</option>
+            <option value="604800">7 days</option><option value="never">Until revoked</option>
+          </select></label
+        >
         <div class="editor-label">
           <span>Permitted actions</span><span>{grants.length} selected</span>
         </div>
@@ -1163,10 +1271,30 @@
           A client file will be created in your private broker folder. Transfer only that file to
           the agent account. Its token is never displayed here.
         </p>
+      {:else if modal === 'client'}
+        <p>Transfer the client file privately to your agent's account.</p>
+        {#if web}<button
+            class="button secondary"
+            disabled={busy}
+            onclick={() => perform(() => downloadClient(agentName))}>Download client</button
+          >
+        {:else}<pre class="result-output">{clientPath}</pre>{/if}
+        <p>With the keeper-agent CLI installed, run these from the folder containing that file:</p>
+        <pre class="result-output">{agentCommands()}</pre>
+        <p class="field-hint">
+          Keep the client file out of chat and source control. The agent can use only the actions
+          you selected. {accessDuration === 'never'
+            ? 'Access lasts until you revoke it.'
+            : `Access expires in ${accessDuration === '3600' ? '1 hour' : accessDuration === '86400' ? '24 hours' : '7 days'}.`}
+        </p>
       {:else if modal === 'run'}{#if result}<div class="result-label">
             <Icon name="check" size={16} />Broker response
           </div>
-          <pre class="result-output">{result}</pre>
+          <p>{resultSummary}</p>
+          <details>
+            <summary>View result details</summary>
+            <pre class="result-output">{result}</pre>
+          </details>
           <p class="field-hint">
             Check the HTTP status or command exit code in the result. Results are not saved by the
             desktop app.
@@ -1186,8 +1314,8 @@
         </p>{/if}
     </div>
     <div class="dialog-footer">
-      <button class="button secondary" disabled={busy} onclick={() => (modal = null)}
-        >{modal === 'run' && result ? 'Close' : 'Cancel'}</button
+      <button class="button secondary" disabled={busy} onclick={closeModal}
+        >{modal === 'client' || (modal === 'run' && result) ? 'Close' : 'Cancel'}</button
       >{#if modal === 'action'}<button
           class="button primary"
           disabled={busy || !actionName}
@@ -1202,7 +1330,14 @@
           disabled={busy || !agentName || !grants.length}
           onclick={createAgent}
           >{busy ? 'Creating…' : 'Create agent access'}<Icon name="arrow" size={16} /></button
-        >{:else if modal === 'run' && !result}<button
+        >{:else if modal === 'client'}<button class="button primary" onclick={copyInstructions}
+          >{instructionsCopied ? 'Copied' : 'Copy agent commands'}</button
+        >
+      {:else if modal === 'run' && result && testedAction === target}<button
+          class="button primary"
+          onclick={() => openAgent([target])}>Give agent access</button
+        >
+      {:else if modal === 'run' && !result}<button
           class="button primary"
           disabled={busy}
           onclick={run}

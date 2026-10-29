@@ -47,6 +47,14 @@ The browser uses Keeper's password, email/device-approval, authenticator/backup-
 
 Browser workflow tasks execute on the **broker host**, not inside the administrator tab. Web-created workflows default to headless mode. Visible workflows and human interaction with a site's MFA require access to that host's desktop; the web app does not expose remote browser cookies or interactive sessions. Configure TOTP and unattended steps through policy where appropriate.
 
+## First action and agent access
+
+The Actions page guides an empty workspace through connecting Keeper, creating and testing an action, and granting access. Testing performs the real configured action, including any side effects. A successful run offers **Give agent access** with that action preselected. Detailed result JSON stays under **View result details**.
+
+New access lasts seven days by default. **Access lasts** also offers one hour, 24 hours or until revoked. Existing access without an expiry is unchanged. Agent rows show expiry, and the broker refuses expired access even if a request was waiting for an execution slot.
+
+After creating access, download the client file and transfer it privately to the agent account. The final screen provides commands to check status and list approved actions. The agent needs the client CLI or the standalone helper; no administrator key or Keeper password is needed on its account. Revoke expired access and issue a new file when access is needed again.
+
 ## Access from another device
 
 Loopback HTTP is the default. Binding another interface requires HTTPS and an explicit, exact origin:

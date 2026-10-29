@@ -166,6 +166,7 @@ def test_real_tls_client_auth_run_and_revocation(tmp_path):
     path = tmp_path / "client.json"
     write_private(path, config)
     try:
+        assert call_client(path, {"operation": "status"}) == {"ready": True, "actions": 1, "expiresAt": None}
         assert call_client(path, {"operation": "list"})["actions"][0]["name"] == "test"
         result = call_client(path, {"operation": "run", "action": "test"})
         assert result["result"]["output"].strip() == "passed"
@@ -178,6 +179,22 @@ def test_real_tls_client_auth_run_and_revocation(tmp_path):
             assert client.post(config["url"], json={"operation": "list"}).status_code == 401
             assert client.post(config["url"], json={"operation": "list"},
                                headers={"Authorization": f"Bearer {token}", "Origin": "https://evil.invalid"}).status_code == 403
+            broker.queue_timeout = 0.01
+            for _ in range(broker.concurrency):
+                broker.slots.acquire()
+            try:
+                busy = client.post(config["url"], json={"operation": "run", "action": "test"},
+                                   headers={"Authorization": f"Bearer {token}"})
+                assert busy.status_code == 503 and busy.json()["code"] == "queue_timeout"
+            finally:
+                for _ in range(broker.concurrency):
+                    broker.slots.release()
+        clients = json.loads((tmp_path / "clients.json").read_text())
+        clients["agent"]["expiresAt"] = 1
+        (tmp_path / "clients.json").write_text(json.dumps(clients))
+        with pytest.raises(Denied) as expired:
+            call_client(path, {"operation": "status"})
+        assert expired.value.code == "grant_expired"
         (tmp_path / "clients.json").write_text("{}")
         with pytest.raises(Denied, match="Unauthorized"):
             call_client(path, {"operation": "list"})
@@ -207,6 +224,45 @@ def test_personal_vault_legacy_and_typed_fields():
         typed.fields.append(TypedField.new_field("password", "other"))
         with pytest.raises(Denied):
             provider.get({"record": "fixture", "field": "password"})
+    provider.close()
+
+
+def test_legacy_custom_fields_reject_duplicate_labels():
+    from keepercommander.params import KeeperParams
+    from keepercommander.vault import KeeperRecord, PasswordRecord, CustomField
+    from keeper_agent.provider import KeeperProvider
+    from unittest.mock import patch
+    provider = object.__new__(KeeperProvider)
+    provider.params = KeeperParams()
+    record = PasswordRecord()
+    record.custom = [CustomField({"name": "api_key", "value": SECRET}),
+                     CustomField({"name": "api_key", "value": "other"})]
+    with patch.object(KeeperRecord, "load", return_value=record):
+        with pytest.raises(Denied, match="missing, empty, or ambiguous"):
+            provider.get({"record": "fixture", "field": "custom:api_key"})
+    provider.close()
+
+
+@pytest.mark.parametrize("selector", ["password", "custom:api_key"])
+def test_typed_fields_reject_multiple_values(selector):
+    from keepercommander.params import KeeperParams
+    from keepercommander.vault import KeeperRecord, TypedRecord, TypedField
+    from keeper_agent.provider import KeeperProvider
+    from unittest.mock import patch
+    provider = object.__new__(KeeperProvider)
+    provider.params = KeeperParams()
+    record = TypedRecord()
+    field = TypedField.new_field("password", SECRET)
+    if selector.startswith("custom:"):
+        field.label = "api_key"
+        record.custom = [field]
+    else:
+        record.fields = [field]
+    with patch.object(KeeperRecord, "load", return_value=record):
+        assert provider.get({"record": "fixture", "field": selector}) == SECRET
+        field.value = [SECRET, "other"]
+        with pytest.raises(Denied, match="missing, empty, or ambiguous"):
+            provider.get({"record": "fixture", "field": selector})
     provider.close()
 
 

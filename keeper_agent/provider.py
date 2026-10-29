@@ -48,14 +48,21 @@ class KeeperProvider:
         value = None
         if isinstance(record, PasswordRecord):
             if field.startswith("custom:"):
-                value = record.get_custom_value(field[7:])
+                # Commander's convenience getter picks the first matching label.
+                # A secret reference must identify exactly one field.
+                matches = [f for f in record.custom if f.name == field[7:]]
+                if len(matches) == 1:
+                    value = matches[0].value
             elif field in {"login", "password", "url", "notes", "oneTimeCode"}:
                 value = getattr(record, {"url": "link", "oneTimeCode": "totp"}.get(field, field))
         elif isinstance(record, TypedRecord):
             matches = [f for f in [*record.fields, *record.custom]
                        if (f.label == field[7:] if field.startswith("custom:") else f.type == field)]
             if len(matches) == 1:
-                value = matches[0].get_default_value(str)
+                # A typed field can itself contain several values. Never silently
+                # choose the first credential when the reference has no index.
+                values = matches[0].value
+                value = values[0] if isinstance(values, list) and len(values) == 1 else None
         if not isinstance(value, str) or not value:
             raise Denied("Configured record field is missing, empty, or ambiguous")
         return value

@@ -17,9 +17,11 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .cli import add_client, call_client, initialize, replace_private
+from .cli import add_client, call_client, initialize, replace_private, revoke_client
+from .audit import files as audit_files
 from .policy import NAME, validate
 from .security import Denied, read_json
+from .state import transaction
 
 REGIONS = {"US": "keepersecurity.com", "EU": "keepersecurity.eu", "AU": "keepersecurity.com.au",
            "CA": "keepersecurity.ca", "JP": "keepersecurity.jp", "US GOV": "govcloud.keepersecurity.us"}
@@ -45,25 +47,35 @@ def online(state):
 
 
 def audit_tail(state):
-    path = state / "audit.jsonl"
-    if not path.exists():
-        return []
-    with path.open("rb") as stream:
-        stream.seek(0, 2)
-        size = stream.tell()
-        stream.seek(max(0, size - 262144))
-        if size > 262144:
-            stream.readline()
-        lines = stream.read().splitlines()[-200:]
     entries = []
-    for line in reversed(lines):
+    budget = 262144
+    for path in reversed(audit_files(state)):
+        if budget <= 0 or len(entries) >= 200:
+            break
         try:
-            raw = json.loads(line)
-            entry = {key: str(raw.get(key, ""))[:160] for key in ("id", "time", "client", "action", "status")}
-            if entry["status"] in {"started", "completed", "failed"}:
-                entries.append(entry)
-        except (ValueError, AttributeError):
+            with path.open("rb") as stream:
+                stream.seek(0, 2)
+                size = stream.tell()
+                start = max(0, size - budget)
+                stream.seek(start)
+                chunk = stream.read(budget)
+        except FileNotFoundError:
+            # Rotation can rename the current file between listing and opening.
             continue
+        budget -= len(chunk)
+        lines = chunk.splitlines()
+        if start:
+            lines = lines[1:]  # discard a possibly partial first line
+        for line in reversed(lines):
+            try:
+                raw = json.loads(line)
+                entry = {key: str(raw.get(key, ""))[:160] for key in ("id", "time", "client", "action", "status")}
+                if entry["status"] in {"started", "completed", "failed"}:
+                    entries.append(entry)
+                    if len(entries) >= 200:
+                        break
+            except (ValueError, AttributeError):
+                continue
     return entries
 
 
@@ -88,7 +100,9 @@ def snapshot(state):
                                 "timeout": action.get("timeout", 60),
                                 "grants": sum(name in x["actions"] for x in clients.values()
                                               if not x.get("desktopTemporary"))})
-    base["clients"] = [{"name": name, "actions": data["actions"]} for name, data in sorted(clients.items())
+    base["clients"] = [{"name": name, "actions": data["actions"], "expiresAt": data.get("expiresAt"),
+                        "expired": data.get("expiresAt", float("inf")) <= time.time()}
+                       for name, data in sorted(clients.items())
                        if not data.get("desktopTemporary")]
     base["events"] = audit_tail(state)
     status = state / "broker-status.json"
@@ -111,6 +125,20 @@ def validate_templates(action):
 
 
 def dispatch(request):
+    # The lock covers each whole edit, including reads, across CLI/native/web.
+    # Never hold it while executing an action or waiting for Keeper.
+    if isinstance(request, dict) and request.get("operation") in {
+            "save_action", "delete_action", "create_client", "revoke_client"}:
+        path = request.get("state")
+        if isinstance(path, str):
+            folder = Path(path).expanduser()
+            if folder.is_absolute() and folder.is_dir():
+                with transaction(folder.resolve()):
+                    return _dispatch(request)
+    return _dispatch(request)
+
+
+def _dispatch(request):
     if not isinstance(request, dict) or not isinstance(request.get("state"), str):
         raise Denied("Select a broker folder first")
     state = Path(request["state"]).expanduser()
@@ -166,23 +194,17 @@ def dispatch(request):
             raise Denied("Select permitted actions")
         filename = state / f"{name}-client.json"
         with contextlib.redirect_stdout(io.StringIO()):
-            add_client(state, name, grants, filename)
+            add_client(state, name, grants, filename, expires_in=request.get("expiresIn", 7 * 86400))
         return {"path": str(filename), "snapshot": snapshot(state)}
     if op == "revoke_client":
-        clients = read_json(state / "clients.json")
-        if name not in clients:
-            raise Denied("Agent no longer exists")
-        del clients[name]
-        replace_private(state / "clients.json", clients)
-        # Revoke the capability first. Remove only the generated file in private state.
-        (state / f"{name}-client.json").unlink(missing_ok=True)
+        revoke_client(state, name)
         return snapshot(state)
     if op == "run":
         if name not in policy["actions"]:
             raise Denied("Action no longer exists")
         current = snapshot(state)
         if not current["online"]:
-            raise Denied("The broker is not connected. Connect Keeper first.")
+            raise Denied("The broker is not connected. Connect Keeper first.", "broker_offline")
         # A current broker applies policy edits within about a second; give it
         # that long before concluding it is an older build that needs a restart.
         deadline = time.monotonic() + 3
@@ -193,19 +215,19 @@ def dispatch(request):
             raise Denied("The broker has not applied the latest policy. Restart it before running.")
         client_name = "desktop-run-" + uuid.uuid4().hex
         filename = state / f"{client_name}-client.json"
+        result = None
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                add_client(state, client_name, [name], filename)
-            clients = read_json(state / "clients.json")
-            clients[client_name]["desktopTemporary"] = True
-            clients[client_name]["expiresAt"] = time.time() + 360
-            replace_private(state / "clients.json", clients)
-            return call_client(filename, {"operation": "run", "action": name})
+                add_client(state, client_name, [name], filename, expires_in=360, temporary=True)
+            result = call_client(filename, {"operation": "run", "action": name})
         finally:
-            clients = read_json(state / "clients.json")
-            clients.pop(client_name, None)
-            replace_private(state / "clients.json", clients)
-            filename.unlink(missing_ok=True)
+            try:
+                revoke_client(state, client_name, missing_ok=True)
+                filename.unlink(missing_ok=True)
+            except Exception:
+                if result is not None:
+                    result["warning"] = "The action completed, but temporary access cleanup failed. Access expires automatically."
+        return result
     raise Denied("Unsupported desktop operation")
 
 
@@ -220,7 +242,9 @@ def main():
         from playwright.__main__ import main as playwright_main
         sys.argv = ["playwright", "install", "chromium"]
         return playwright_main()
-    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+    if len(sys.argv) > 1 and sys.argv[1] in {
+            "serve", "init", "validate", "client-add", "client-revoke", "doctor", "audit-verify",
+            "list", "run", "status", "--help", "-h"}:
         from .cli import main as cli_main
         return cli_main(sys.argv[1:])
     try:
@@ -230,7 +254,7 @@ def main():
         result = dispatch(json.loads(raw))
         payload = {"ok": True, "data": result}
     except Denied as error:
-        payload = {"ok": False, "error": str(error)}
+        payload = {"ok": False, **error.payload()}
     except Exception:
         payload = {"ok": False, "error": "Could not complete the request. Check broker configuration and permissions."}
     sys.stdout.write(json.dumps(payload))

@@ -1,18 +1,48 @@
 # Resume Keeper Agent
 
-Saved October 8, 2026, after the owner requested shutdown and shipment.
+Updated October 29, 2026. Codex reviewed the recent Claude transcript for this repository before continuing development, as the owner requested. Use this file for the current handoff; October 8 package results remain historical.
 
-## Current state
+**Current local version: 0.3.2 plus subsequent bug fixes.** The verified 0.3.2 Windows packages predate those fixes and need rebuilding; source changes remain uncommitted and unpublished. Start with [the skill/product review](SKILL-REVIEW.md), root [AGENTS.md](../AGENTS.md), [validation](../VALIDATION.md) and [the 0.3.2 artifact manifest](RELEASE-0.3.2.md).
 
-- Version 0.3 includes the CLI/broker, native Windows/macOS administrator, and authenticated browser administrator. The interface uses charcoal and gold, with optional light/system appearance.
-- Tested application source: `c16e052`. The [build manifest](RELEASE-0.3.0.md) contains package names, checksums, and the successful private CI run. Each platform passed 48 backend tests, eight UI tests, and packaged-runtime checks.
-- The local web process was stopped. No listener remained on ports 19463, 19464, or 19465. No autostart or scheduled service was installed.
-- The browser host's administrator key was created privately. No broker workspace was initialized at shutdown, and this chat has not authenticated to a real Keeper vault.
-- The Laboratory checkout is `C:\Users\david\Laboratory\keeper-agent`; its remote is private `nuroctane/keeper-agent`.
+## Source and completed work
+
+The Laboratory checkout is `C:\Users\david\Laboratory\keeper-agent`. At handoff, `main` and the local `origin/main` tracking ref both pointed to `0947732`, with a clean working tree.
+
+Claude completed these changes before the handoff:
+
+- Web admin and broker availability fixes, tighter policy validation, and corrected security claims (`c135b2d`, `03dfe19`).
+- Policy hot-reload that refuses actions while the policy is invalid or missing (`151040e`).
+- Up to four simultaneous actions, serialized vault access, and rechecking queued grants (`5ef75dd`).
+- Shared vault refreshes for waiting requests without added staleness (`36c33c0`).
+- Keeper session cleanup when the web admin exits, plus hash-chained audit logs with 8 MiB rotation and `audit-verify` (`0947732`).
+
+Claude's transcript reports that `0947732` was pushed and backed up. It also records that Factory Droid restarted the admin but made no project code changes. The temporary transcript extracts and Droid logs were subsequently moved to the Recycle Bin.
+
+## Current continuation
+
+Codex added regression tests and fixes for two further gaps:
+
+- Refuse duplicate legacy custom-field labels and typed fields containing multiple values. Commander's convenience getters otherwise select the first value.
+- Keep rotated audit filenames ordered when the system clock repeats or moves backward, including after a restart. Entry timestamps still record the actual clock time; filenames preserve chain order.
+
+These changes are local until committed and shipped. See [VALIDATION.md](../VALIDATION.md) for the current checks.
+
+The owner then approved the next improvement batch, emphasizing UX simplicity. Version 0.3.1 introduced:
+
+- A short Actions-page setup guide and a **Give agent access** shortcut after a successful test, with the tested action selected. Completion offers a client download or file path and commands to copy. Result JSON is collapsed under details.
+- New grants expire after seven days by default, with one-hour, 24-hour and until-revoked choices. CLI equivalents are `--expires-in-hours` and `--no-expiry`. Existing grants are unchanged.
+- Cross-process serialization of built-in workspace edits, preserving the JSON format. Temporary grants include their expiry in the initial write. Reissuing an agent name cannot authorize a queued request from its old token.
+- Authenticated, metadata-only `status` and safe structured errors (`--json`) for agents. The bundled helper now routes agent CLI commands as well as administrator operations.
+
+Source validation: 97 backend tests, six desktop-preview UI tests and three authenticated web UI tests pass. Windows frozen-helper and web-host smoke tests, ZIP and installer integrity checks, and comparisons of the installer's embedded runtime/frontend also pass. Verified Windows artifacts and checksums are in [the 0.3.1 manifest](RELEASE-0.3.1.md), with local files under `work/releases/0.3.1`. No installation or publication was performed. See [VALIDATION.md](../VALIDATION.md).
 
 ## Start again
 
-Use [WEB.md](WEB.md) for web-host startup and authentication, or [DESKTOP.md](DESKTOP.md) for the native app. Verified downloads are in this chat's `outputs` folder; copies are retained under the lab's ignored `work/releases/0.3.0` directory.
+The owner requested a deep review of the skill libraries with `.nur` preferred over mirrors. See [SKILL-REVIEW.md](SKILL-REVIEW.md) and root [AGENTS.md](../AGENTS.md) for routing, findings, fixes and the ordered roadmap. Validation with patched dependencies is now 100 backend tests plus six desktop and three web UI tests, frozen-helper/web-host smoke checks and verified Windows packaging. The Python dependency audit is clean; one unpatched low-severity npm build-tool advisory remains. See [the 0.3.2 manifest](RELEASE-0.3.2.md) for exact files and checksums.
+
+Use [WEB.md](WEB.md) for web-host startup and authentication, or [DESKTOP.md](DESKTOP.md) for the native app. The verified [0.3.2 Windows builds](RELEASE-0.3.2.md) predate the latest bug fixes; rebuild them before distributing current code. The [0.3.1 manifest](RELEASE-0.3.1.md) and [0.3 manifest](RELEASE-0.3.0.md) describe historical packages that lack the latest fixes. Their local files and checksums remain unchanged.
+
+Claude last reported no running admin or broker and an initialized workspace without actions or agent grants at `%LOCALAPPDATA%\dev.nuroctane.keeper-agent\broker`. That is a historical observation, not a live health check. Check current listeners before starting or restarting a service.
 
 The previous Codex-hosted launch redirected its private administration folder to:
 
@@ -22,13 +52,13 @@ C:\Users\david\AppData\Local\Packages\OpenAI.Codex_2p2nqsd0c76g0\LocalCache\Loca
 
 That folder contains `admin-access.key`. Its contents must remain private and outside source control. To reuse it, pass that directory explicitly as `--web-state` and a separate sibling `broker` directory as `--state`. Launching from a normal terminal can otherwise use a different Local AppData location. The default browser address is `http://127.0.0.1:19464/`.
 
-The attempted automatic default-browser opening was blocked by the tool's approval policy. The server itself worked and returned HTTP 200; the URL can be opened manually after starting it.
+## Remaining work
 
-## Remaining setup and validation
+1. Rebuild and verify macOS 0.3.2 packages on a Mac/CI before describing them as current. Keep historical release checksums intact. Changes are still uncommitted and unpublished.
+2. Follow the prioritized roadmap in [SKILL-REVIEW.md](SKILL-REVIEW.md): approved action revisions, a local MCP adapter, durable execution receipts and measured scheduling improvements. A ten-second execution-slot queue bound is already implemented; fairness and receipts are not. Preserve policy fail-closed behavior, queued revocation checks, vault-refresh freshness, bounded outputs and metadata-only auditing.
+3. Verify the real Keeper login and one narrowly scoped target action with the owner. Tests use synthetic secrets; they do not establish real-account or real-site behavior. Never send master passwords, MFA codes or administrator keys into chat.
+4. Provision and validate separate broker and agent OS accounts before relying on the README's isolation boundary.
 
-1. Choose the private broker OS account and keep agent access under a separate unprivileged account, following the README's trust boundary.
-2. Initialize the workspace with the owner's Keeper email and region, then authenticate privately. Never send the master password, MFA codes, or administrator key into chat.
-3. Configure a narrowly scoped action with real record references; verify the intended result before granting it to an agent.
-4. Validate account-specific Keeper login and target-site behavior. Hardware-key-only, biometric, enterprise SSO, and recovery flows use existing Keeper tools. Site workflows execute on the broker host.
+The audit chain cannot detect removal of the newest entries or a complete rewrite by the broker account. Approved commands receive plaintext credentials and remain trusted code. Hardware-key-only, biometric, enterprise SSO and account recovery flows require existing Keeper tools.
 
 Packages are unsigned development builds. Mac packaging currently targets Apple Silicon; signing/notarization, Intel packaging, and manual native UI validation remain future work. The software has not received an independent security audit.

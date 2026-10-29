@@ -69,7 +69,7 @@ Choose a **new** private state directory outside source control. Run these yours
 `init` creates an empty policy and a self-signed local TLS certificate. For non-US vaults, change `server` in `keeper.json` to your official Keeper region hostname. There is no plaintext master password field to fill in.
 
 1. Copy the actions you need from `examples/policy.windows.json` into the state's `policy.json`.
-2. Replace record UID placeholders with UIDs from your Keeper vault. UIDs identify records; they are not passwords. Use `password`, `login`, `oneTimeCode`, or `custom:Your field label` as the field selector. Ambiguous/missing fields fail closed.
+2. Replace record UID placeholders with UIDs from your Keeper vault. UIDs identify records; they are not passwords. Use `password`, `login`, `oneTimeCode`, or `custom:Your field label` as the field selector. Missing or ambiguous fields fail closed, including duplicate legacy custom-field labels and typed fields containing multiple values.
 3. Customize fixed repository names, executable paths, URLs, browser selectors, and expected result fields. The sample `app.example.com` login is a template, not a working website integration. Its final `wait` is the success assertion; a click alone does not prove a login succeeded.
 4. Validate, issue a scoped client into private state, and start the broker:
 
@@ -89,6 +89,8 @@ Keep the terminal open. Ctrl+C stops the broker and clears its in-process Keeper
 
 ## Give an agent access
 
+In the administrator, run an action once to check its result, then choose **Give agent access**. The tested action is preselected. Choose an access duration, create the grant, and transfer the client file privately. The final screen includes connection commands to copy; result JSON is available under **View result details**.
+
 Transfer **only** `codex-client.json` to a private location readable by the agent account, using Windows file permissions to grant that account access. It contains a capability token plus the public TLS certificate. Never transfer `keeper.json`, `server.key`, or the broker state directory. The agent needs only the client package (`Setup.ps1 -ClientOnly`).
 
 ```powershell
@@ -96,6 +98,10 @@ keeper-agent list --client C:\AgentAccess\codex-client.json
 keeper-agent run github-me --client C:\AgentAccess\codex-client.json
 keeper-agent run website-account --client C:\AgentAccess\codex-client.json
 ```
+
+Use `keeper-agent status --client C:\AgentAccess\codex-client.json --json` to check broker readiness and grant expiry without running an action. It checks reachability and policy validity, not a live vault read. `status`, `list` and `run` accept `--json` for structured errors on stderr, with a stable code and a safe next step. Interrupted responses warn that the action may have run; they are never retried automatically.
+
+New client grants expire after seven days by default. In the CLI, set `client-add --expires-in-hours 1` for a short session or `--no-expiry` for access until revoked. Existing grants without expiry are unchanged. Expiry is enforced again after waiting for an execution slot; actions already running may finish. Revoke expired access before issuing a replacement.
 
 If PATH is unchanged, invoke `.venv\Scripts\keeper-agent.exe` by its full path. `AGENT-USAGE.md` contains instructions suitable for the agent's own workspace.
 
@@ -111,7 +117,8 @@ For a TOTP secret stored in Keeper, add a secret reference with `"field": "oneTi
 
 - The broker applies `policy.json` edits without a restart: it checks the file before each request and about once a second. Each action runs against the policy it was authorized with. If the file becomes invalid or missing, the broker refuses every action until it is valid again, so a broken edit cannot leave a removed action live. Client grants are reloaded on every request.
 - Each client gets an explicit list of named actions. There are no wildcard grants. A token is a capability to repeat those actions; use read-only, narrowly scoped upstream credentials where possible.
-- The broker accepts connections concurrently and runs up to four actions at once; further requests wait for a free slot. Keeper vault sync and secret reads go through one Commander session one at a time, and each action holds it only while fetching its secrets. A request that waits for a slot rechecks its grant and the current policy before it starts, so revoking a client also stops its queued runs. This is a local tool for a small number of agents, not a multi-tenant internet service.
+- Built-in administrator edits and CLI grant/revoke operations serialize workspace changes across processes and replace JSON files atomically. This prevents one edit from overwriting a concurrent revocation or action save. Manual file editing does not participate in that lock; avoid editing the same files manually while using the administrator.
+- The broker accepts connections concurrently and runs up to four actions at once; further requests wait up to ten seconds for a free slot, then return `queue_timeout` (HTTP 503) without starting an action. Keeper vault sync and secret reads go through one Commander session one at a time, and each action holds it only while fetching its secrets. A request that waits for a slot rechecks its grant and the current policy before it starts, so revoking a client also stops its queued runs. This is a local tool for a small number of agents, not a multi-tenant internet service.
 - HTTP and browser output is capped at 256 KiB. Commands have a bounded runtime and output size. Tracked command descendants are terminated on completion/timeout, but process cleanup is not a containment boundary for malicious executables.
 - HTTP timeouts bound network operations; the response loop also checks elapsed time. They are not a hard process-level wall-clock deadline.
 - `http.outputs` maps friendly names to dot-separated JSON paths, including numeric array indices. Missing fields fail the action. HTTP 4xx/5xx statuses are returned as statuses; consumers must inspect them. Commands return `exit_code`; consumers must inspect it. Browser completion means configured steps finished.
@@ -137,6 +144,8 @@ $env:KEEPER_AGENT_BROWSER_TEST = '1'
 The browser test uses real Playwright Chromium with synthetic HTTPS pages fulfilled in-process. It submits a fake password, verifies unauthorized origin blocking, and checks output redaction. No real credentials or Keeper account are needed for tests. Set `KEEPER_AGENT_BROWSER_CHANNEL=msedge` to test Edge instead. See `VALIDATION.md` for the actual results from this build.
 
 ## Upstream references
+
+The [skill and product review](docs/SKILL-REVIEW.md) records the current library review, concrete fixes, dependency triage and prioritized follow-up work. [AGENTS.md](AGENTS.md) preserves the project boundaries for future agents.
 
 - [Keeper Commander source and authentication](https://github.com/Keeper-Security/Commander)
 - [Official Commander SDK login example](https://github.com/Keeper-Security/Commander/blob/master/examples/add_record_to_shared_folder.py)

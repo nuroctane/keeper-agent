@@ -11,6 +11,15 @@ from urllib.parse import quote, quote_plus, urlsplit
 class Denied(Exception):
     """A deliberately non-sensitive error suitable for the agent interface."""
 
+    def __init__(self, message, code="request_denied", hint=None):
+        super().__init__(message)
+        self.code = code
+        self.hint = hint
+
+    def payload(self):
+        return {"error": str(self), "code": self.code,
+                **({"hint": self.hint} if self.hint else {})}
+
 
 def read_json(path):
     with open(path, encoding="utf-8-sig") as stream:

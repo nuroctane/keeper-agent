@@ -11,7 +11,7 @@ import hashlib
 import json
 import secrets
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 CURRENT = "audit.jsonl"
 LIMIT = 8 * 1024 * 1024
@@ -23,7 +23,7 @@ def line_hash(raw):
 
 
 def files(state):
-    # Rotated names embed a UTC timestamp, so name order is write order.
+    # Rotation names increase even when the system clock moves backwards.
     rotated = sorted(state.glob("audit-*.jsonl"))
     current = state / CURRENT
     return rotated + ([current] if current.exists() else [])
@@ -59,7 +59,13 @@ class AuditLog:
             if self.prev is None:
                 self.prev = last_hash(self.state)
             if path.exists() and path.stat().st_size >= self.limit:
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                stamp_format = "%Y%m%dT%H%M%S%fZ"
+                stamp = datetime.now(timezone.utc).strftime(stamp_format)
+                latest = max(self.state.glob("audit-*.jsonl"), default=None)
+                if latest is not None:
+                    previous = latest.name.split("-")[1]
+                    if stamp <= previous:
+                        stamp = (datetime.strptime(previous, stamp_format) + timedelta(microseconds=1)).strftime(stamp_format)
                 try:
                     path.replace(self.state / f"audit-{stamp}-{secrets.token_hex(2)}.jsonl")
                 except PermissionError:

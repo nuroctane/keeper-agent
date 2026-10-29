@@ -37,11 +37,17 @@ snapshot = request("snapshot")
 warm = time.perf_counter() - started
 assert token not in json.dumps(snapshot)
 assert snapshot["clients"][0]["actions"] == ["fixture"]
+assert snapshot["clients"][0]["expiresAt"] > time.time()
 request("revoke_client", name="fixture-agent")
 assert not client.exists()
 assert not request("delete_action", name="fixture")["actions"]
 help_result = subprocess.run([str(core), "serve", "--help"], capture_output=True, timeout=30)
 assert help_result.returncode == 0
 assert subprocess.run([str(core), "web", "--help"], capture_output=True, timeout=30).returncode == 0
+for command in ("status", "list", "run"):
+    assert subprocess.run([str(core), command, "--help"], capture_output=True, timeout=30).returncode == 0
+failure = subprocess.run([str(core), "status", "--client", str(state / "missing.json"), "--json"],
+                         capture_output=True, text=True, timeout=30)
+assert failure.returncode == 1 and json.loads(failure.stderr)["code"] == "operation_failed"
 print(json.dumps({"passed": True, "initialSnapshotSeconds": round(first, 3),
     "repeatSnapshotSeconds": round(warm, 3), "syntheticState": str(state)}))

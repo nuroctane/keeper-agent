@@ -23,4 +23,5 @@ desktop/src-tauri/binaries/
 desktop/test-results/
 desktop/playwright-report/
 broker-status.json
+.workspace.lock
 admin-access.key

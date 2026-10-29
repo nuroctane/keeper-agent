@@ -225,8 +225,10 @@ class WebAdmin:
                 path = Path(payload.get("path", ""))
                 if not path.is_absolute() or not (path / "keeper.json").is_file():
                     raise Denied("Enter an absolute broker-host folder containing keeper.json")
-                self.state = path.resolve()
-                return dispatch({"operation": "snapshot", "state": str(self.state)})
+                candidate = path.resolve()
+                result = dispatch({"operation": "snapshot", "state": str(candidate)})
+                self.state = candidate
+                return result
             if op == "download_client":
                 name = payload.get("name")
                 if not isinstance(name, str) or not NAME.fullmatch(name) or name.startswith("desktop-run-"):
@@ -356,7 +358,7 @@ def handler_for(admin):
             except PermissionError:
                 self.reply(401, {"error": "Session expired. Sign in again."})
             except Denied as error:
-                self.reply(403, {"error": str(error)})
+                self.reply(403, error.payload())
             except Exception:
                 self.reply(400, {"error": "Could not complete this request. Check workspace configuration and permissions."})
 

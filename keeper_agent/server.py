@@ -19,6 +19,7 @@ from .security import Denied, read_json, token_hash
 class Broker:
     # Actions that may execute at once. Commander access is separately serialized.
     concurrency = 4
+    queue_timeout = 10
 
     def __init__(self, state, policy, provider):
         self.state = state
@@ -71,7 +72,8 @@ class Broker:
     def current_policy(self):
         self.refresh()
         if self.policy_error:
-            raise Denied("Broker policy is invalid; fix policy.json")
+            raise Denied("Broker policy is invalid; fix policy.json", "policy_invalid",
+                         "Ask the administrator to fix the action policy. No action was started.")
         return self.engine.policy
 
     def authenticate(self, token):
@@ -82,26 +84,36 @@ class Broker:
         for name, client in clients.items():
             if hmac.compare_digest(client["sha256"], digest):
                 if not self.live(name, client):
-                    raise Denied("Unauthorized")
+                    raise Denied("Unauthorized: agent access has expired.", "grant_expired",
+                                 "Ask the administrator to revoke this access and issue a new client file.")
                 return name, set(client["actions"])
-        raise Denied("Unauthorized")
+        raise Denied("Unauthorized", "unauthorized", "Ask the administrator to check or replace your client file.")
 
     @staticmethod
     def live(name, client):
         default_expiry = 0 if name.startswith("desktop-run-") else float("inf")
         return client.get("expiresAt", default_expiry) > time.time()
 
-    def granted(self, name, action):
+    def granted(self, name, action, credential=None):
         # Rechecked when a queued run starts, so revoking a client also stops
         # runs that were waiting for a slot, not only later requests.
         client = read_json(self.state / "clients.json").get(name)
-        return bool(client) and self.live(name, client) and action in client["actions"]
+        return (bool(client) and self.live(name, client) and action in client["actions"]
+                and (credential is None or hmac.compare_digest(client["sha256"], credential)))
 
     def audit(self, request_id, client, action, status):
         self.audit_log.append({"time": datetime.now(timezone.utc).isoformat(), "id": request_id,
                                "client": client, "action": action, "status": status})
 
-    def invoke(self, client, allowed, body):
+    def invoke(self, client, allowed, body, credential=None):
+        if body == {"operation": "status"}:
+            try:
+                policy = self.current_policy()
+            except Denied as error:
+                return {"ready": False, **error.payload()}
+            grant = read_json(self.state / "clients.json").get(client, {})
+            return {"ready": True, "actions": len(allowed & policy["actions"].keys()),
+                    "expiresAt": grant.get("expiresAt")}
         if body == {"operation": "list"}:
             actions = self.current_policy()["actions"]
             return {"actions": [{"name": name, "kind": actions[name]["kind"],
@@ -111,22 +123,40 @@ class Broker:
             raise Denied("Expected a named action; custom arguments are not accepted")
         name = body["action"]
         if not isinstance(name, str) or name not in allowed:
-            raise Denied("Action not permitted")
+            raise Denied("Action not permitted", "action_not_permitted",
+                         "List your granted actions or ask the administrator for access.")
         request_id = str(uuid.uuid4())
-        with self.slots:
+        if not self.slots.acquire(timeout=self.queue_timeout):
+            raise Denied("The broker is busy. This action was not started.", "queue_timeout",
+                         "Wait for a running action to finish before trying again.")
+        try:
             # Resolve the policy and grant after waiting for a slot, so an action
             # removed, changed or revoked meanwhile never runs from stale state.
             policy = self.current_policy()
-            if name not in policy["actions"] or not self.granted(client, name):
-                raise Denied("Action not permitted")
+            if name not in policy["actions"] or not self.granted(client, name, credential):
+                grant = read_json(self.state / "clients.json").get(client)
+                if grant and not self.live(client, grant):
+                    raise Denied("Unauthorized: agent access has expired.", "grant_expired")
+                raise Denied("Action not permitted", "action_not_permitted")
             self.audit(request_id, client, name, "started")
             try:
                 result = self.engine.run(name, policy, vault=self.vault)
             except Exception:
-                self.audit(request_id, client, name, "failed")
+                try:
+                    self.audit(request_id, client, name, "failed")
+                except Exception:
+                    raise Denied("The action failed and its audit record could not be written.", "outcome_unknown",
+                                 "Check the destination before repeating; the action may have caused side effects.") from None
                 # SDK, HTTP and browser exceptions can include credentials or filled values.
-                raise Denied("Action failed; inspect policy and authentication in the admin terminal") from None
-            self.audit(request_id, client, name, "completed")
+                raise Denied("Action failed; inspect policy and authentication in the admin terminal", "action_failed",
+                             "Check Activity before repeating an action; it may have caused side effects.") from None
+            try:
+                self.audit(request_id, client, name, "completed")
+            except Exception:
+                raise Denied("The action completed, but its audit record could not be written.", "outcome_unknown",
+                             "Check the destination before repeating; the action may have caused side effects.") from None
+        finally:
+            self.slots.release()
         return {"action": name, "request_id": request_id, "result": result}
 
 
@@ -162,8 +192,11 @@ def handler_for(broker):
                     if not auth.startswith("Bearer "):
                         raise Denied("Unauthorized")
                     name, allowed = broker.authenticate(auth[7:])
+                except Denied as error:
+                    self.reply(401, error.payload())
+                    return
                 except Exception:
-                    self.reply(401, {"error": "Unauthorized"})
+                    self.reply(401, {"error": "Unauthorized", "code": "unauthorized"})
                     return
                 if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
                     raise Denied("Invalid request framing")
@@ -173,10 +206,10 @@ def handler_for(broker):
                 data = self.rfile.read(size)
                 if len(data) != size:
                     raise Denied("Incomplete request body")
-                result = broker.invoke(name, allowed, json.loads(data))
+                result = broker.invoke(name, allowed, json.loads(data), credential=token_hash(auth[7:]))
                 self.reply(200, result)
             except Denied as error:
-                self.reply(403, {"error": str(error)})
+                self.reply(503 if error.code == "queue_timeout" else 403, error.payload())
             except Exception:
                 self.reply(400, {"error": "Request failed"})
     return Handler

@@ -1,6 +1,7 @@
 import io
 import json
 import threading
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 import subprocess
 
@@ -29,6 +30,31 @@ def test_rotation_keeps_one_chain_across_files(tmp_path):
     fill(tmp_path, 40, limit=600)
     assert len(files(tmp_path)) > 3
     assert verify(tmp_path) == (40, None)
+
+
+def test_rotation_survives_a_clock_rollback_and_restart(tmp_path, monkeypatch):
+    clock = {"now": datetime(2026, 10, 29, tzinfo=timezone.utc)}
+
+    class Clock(datetime):
+        @staticmethod
+        def now(tz):
+            return clock["now"]
+
+    monkeypatch.setattr("keeper_agent.audit.datetime", Clock)
+    log = AuditLog(tmp_path, limit=1)
+    log.append({"id": "first"})
+    log.append({"id": "second"})
+    clock["now"] -= timedelta(hours=1)
+    log.append({"id": "third"})
+    assert verify(tmp_path) == (3, None)
+    # Restarts must recover the ordering without relying on an in-memory clock.
+    log = AuditLog(tmp_path, limit=1)
+    log.append({"id": "fourth"})
+    assert verify(tmp_path) == (4, None)
+    # The latest entry may be in a rotated file if the process stops mid-rotation.
+    (tmp_path / "audit.jsonl").replace(tmp_path / "audit-20261029T000000000003Z-last.jsonl")
+    fill(tmp_path, 1, limit=1)
+    assert verify(tmp_path) == (5, None)
 
 
 def test_editing_an_entry_breaks_the_chain(tmp_path):

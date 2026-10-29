@@ -494,6 +494,22 @@ main {
 .center {
   text-align: center;
 }
+.getting-started {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.getting-started p {
+  margin: 6px 0 0;
+  max-width: 56ch;
+  color: var(--muted);
+}
 .summary-strip {
   display: flex;
   align-items: center;

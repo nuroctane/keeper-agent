@@ -42,11 +42,36 @@ test('create an action, grant scoped access, then revoke', async ({ page }) => {
   await page.getByLabel('Agent name', { exact: true }).fill('fixture-agent');
   await page.getByRole('checkbox', { name: /fixture-api/ }).check();
   await page.getByRole('button', { name: 'Create agent access' }).click();
+  await expect(page.getByRole('heading', { name: 'Your agent is ready to connect' })).toBeVisible();
+  await expect(page.locator('.result-output').last()).toContainText('keeper-agent status');
+  await expect(page.getByRole('dialog')).toContainText('Access expires in 7 days.');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
   const row = page.locator('.agent-row').filter({ hasText: 'fixture-agent' });
   await expect(row).toContainText('1 approved action');
   await row.getByRole('button', { name: 'Revoke', exact: true }).click();
   await page.getByRole('button', { name: 'Revoke access', exact: true }).click();
   await expect(row).toHaveCount(0);
+});
+
+test('a successful test leads directly to scoped, expiring agent access', async ({ page }) => {
+  await page.goto('/?demo=1');
+  await page.getByRole('button', { name: 'Run action', exact: true }).click();
+  await page.getByRole('button', { name: 'Run now', exact: true }).click();
+  await page.getByRole('button', { name: 'Give agent access', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: /github-profile/ })).toBeChecked();
+  await expect(page.getByLabel('Access lasts')).toHaveValue('604800');
+  await page.getByLabel('Access lasts').selectOption('3600');
+  await page.getByLabel('Agent name', { exact: true }).fill('short-session');
+  await page.getByRole('button', { name: 'Create agent access' }).click();
+  await expect(page.getByRole('dialog')).toContainText('Access expires in 1 hour.');
+  await expect(page.getByRole('dialog')).toContainText('short-session-client.json');
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.getByRole('button', { name: 'Copy agent commands', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Copied', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
+    'keeper-agent status',
+  );
+  await page.screenshot({ path: '../work/agent-access-0.3.2.png' });
 });
 
 test('keyboard dialog dismissal, theme, and minimum window width', async ({ page }) => {
@@ -56,6 +81,11 @@ test('keyboard dialog dismissal, theme, and minimum window width', async ({ page
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
   ).toBeTruthy();
+  await page.getByRole('button', { name: 'New action' }).click();
+  await expect(page.getByRole('dialog', { name: 'Create an action', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Action name', { exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'New action', exact: true })).toBeFocused();
   await page.getByRole('button', { name: 'New action' }).click();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);

@@ -26,20 +26,29 @@ jobs:
       - name: Install Python dependencies
         shell: bash
         run: |
-          python -m pip install -e '.[keeper,browser,test]' pyinstaller==6.22.3
+          python -m pip install -e '.[keeper,browser,test]' pyinstaller==6.22.3 'pillow>=13.0.0' 'setuptools>=84.1.0' pip-audit
           python -m playwright install chromium --only-shell
+      - name: Audit packaged Python dependencies
+        run: pip-audit --skip-editable
       - name: Test backend
         env:
           KEEPER_AGENT_BROWSER_TEST: '1'
         run: python -m pytest -q
       - name: Install frontend
         working-directory: desktop
-        run: npm ci
+        run: npm ci --ignore-scripts
+      - name: Build the allowed esbuild binary
+        working-directory: desktop
+        run: npm rebuild esbuild --ignore-scripts=false
+      - name: Audit frontend dependencies
+        working-directory: desktop
+        run: npm audit --audit-level=high
+      - name: Install interface test browser
+        working-directory: desktop
+        run: npx playwright install chromium --only-shell
       - name: Test frontend
         working-directory: desktop
-        run: |
-          npx playwright install chromium --only-shell
-          npm test
+        run: npm test
       - name: Test authenticated web app
         working-directory: desktop
         run: npm run test:web

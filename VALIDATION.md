@@ -1,4 +1,32 @@
-# Validation — October 6, 2026
+# Validation
+
+## Skill review and hardening 0.3.2 — October 29, 2026
+
+- **100 backend tests passed** with the updated dependencies and opt-in real Chromium test, in 77.29 seconds. New regressions cover client-file ownership during revocation, bounded execution-slot waiting and activity history across rotated logs; the real TLS test checks HTTP 503 and `queue_timeout`.
+- Six desktop-preview UI tests passed in 16.6 seconds, including accessible dialog names and initial/return keyboard focus. Three authenticated web UI tests passed in 13.0 seconds. Formatting and the production build pass with zero Svelte/TypeScript errors or warnings.
+- Updated certifi to 2026.10.19, Pillow to 13.0.0 and setuptools to 84.1.0, checking compatibility after each update. The final 87-package Python environment passes `uv pip check` and `pip-audit` reports no known vulnerabilities. The npm audit retains three low entries in one unpatched build-tool dependency chain; no high, moderate or critical entries. See [the review](docs/SKILL-REVIEW.md) for the advisory and triage limits. No Rust advisory audit was completed.
+- Automatic PR/main source-check workflows are prepared, with read-only permissions, dependency audits and synthetic backend/UI tests. Local equivalent commands pass; hosted CI execution has not been performed.
+- The [skill review](docs/SKILL-REVIEW.md) distinguishes the complete inventory/screening from close reading of relevant guidance. Attempted independent reviews stopped on usage limits and are not counted as verification.
+- Windows frozen-helper and web-host smoke tests pass. The ZIP passes its CRC test and includes the updated agent guide; the NSIS installer passes its 7-Zip integrity test. The extracted helper and four bundled web assets match the verified runtime and production build. The bundled CA store matches patched certifi, and the archive contains Pillow 13.0.0 and the client-file ownership fix. Exact filenames and hashes are in [the 0.3.2 manifest](docs/RELEASE-0.3.2.md).
+- Older manifests below describe their historical artifacts. No real credentials or production actions were used. No installer was run; macOS 0.3.2 and full native interaction remain unverified.
+
+## Agent setup and access 0.3.1 — October 29, 2026
+
+- **97 backend tests passed**, including opt-in real Chromium tests, in 67.05 seconds on this Windows host. Thirteen new cases cover concurrent workspace saves, cross-process revocation, lock cleanup/nesting, grant expiry and compatibility, invalid durations, metadata-only status, safe structured errors, temporary grants, and replacement-token checks before execution.
+- Six desktop-preview UI tests passed in 14.1 seconds. Three authenticated web UI tests passed in 12.5 seconds. The new guided flow tests cover preselecting the tested action, changing access duration, creating access, and copying working connection-command text without exposing the token.
+- Production frontend build: zero Svelte/TypeScript errors or warnings. Result details are collapsed by default. The agent-access completion dialog was visually inspected.
+- Existing JSON workspaces and grants without expiry remain compatible. New grants default to seven days. Built-in edits serialize through an OS file lock across processes and atomic JSON replacement; this is not a database migration or a multi-file crash-recovery transaction. Manual file editing does not acquire that lock.
+- Windows frozen desktop-helper and web-host smoke checks passed, including grant expiry metadata, agent CLI routing and structured JSON failures. The standalone ZIP passed a CRC integrity test; the NSIS installer passed a 7-Zip integrity test. The installer's extracted helper and frontend match the verified runtime and UI build. Filenames and SHA-256 checksums are in [the 0.3.1 manifest](docs/RELEASE-0.3.1.md).
+- Tests use synthetic state and credentials. No installer was run. Real Keeper authentication, separate-account isolation, and macOS execution were not tested in this continuation.
+
+## Source continuation — October 29, 2026
+
+- Started from Claude's completed source at `0947732`. Reviewed the recent Claude transcript for this repository before making changes.
+- **84 backend tests passed**, including the opt-in real Chromium tests, in 57.42 seconds on Windows with the repository's Python environment. Tests use synthetic credentials; no live Keeper authentication or production action was performed.
+- Four new regression cases failed before the fixes: duplicate legacy custom-field labels, multiple values in a typed standard field, multiple values in a typed custom field, and audit rotation after a clock rollback. They now pass. The rotation test also covers repeated timestamps and recovery across process restarts, including a missing current file after rotation.
+- Five desktop-preview UI tests passed in 11.1 seconds. Three authenticated web UI tests passed in 11.8 seconds. The production frontend build passed with zero Svelte/TypeScript errors or warnings.
+- Ambiguous secret references now fail rather than selecting the first credential. Rotated audit filenames retain write order if the system clock repeats or moves backward; entry timestamps still use the actual system clock.
+- This validates source changes only. No frozen runtime, installer or replacement release package was built during this continuation. The October 8 packages below predate the October 25–29 changes.
 
 ## Browser application 0.3 — verified October 8, 2026
 

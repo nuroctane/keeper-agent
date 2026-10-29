@@ -46,7 +46,7 @@ async function webFetch(path: string, payload: Record<string, unknown>) {
   }
   if (!response.ok) {
     const value = await response.json();
-    throw new Error(value.error || 'Request failed');
+    throw new Error([value.error || 'Request failed', value.hint].filter(Boolean).join(' '));
   }
   return response;
 }
@@ -189,6 +189,8 @@ export async function request<T = Snapshot>(
   operation: string = 'snapshot',
   payload: Record<string, unknown> = {},
 ): Promise<T> {
+  // Svelte state arrays may be proxies; every transport accepts plain JSON.
+  payload = JSON.parse(JSON.stringify(payload));
   if (native) return invoke<T>('desktop_request', { request: { operation, ...payload } });
   if (web) return (await webFetch('/admin/request', { ...payload, operation })).json();
   if (!preview) throw new Error('Start the Keeper Agent web server to use this application.');
@@ -235,7 +237,15 @@ export async function request<T = Snapshot>(
       break;
     case 'create_client':
       if (demo.clients.some((c) => c.name === name)) throw new Error('Agent already exists');
-      demo.clients.push({ name, actions: payload.actions as string[] });
+      demo.clients.push({
+        name,
+        actions: payload.actions as string[],
+        expiresAt:
+          payload.expiresIn === null
+            ? null
+            : Date.now() / 1000 + Number(payload.expiresIn ?? 604800),
+        expired: false,
+      });
       return { path: `Preview / ${name}-client.json`, snapshot: structuredClone(demo) } as T;
     case 'revoke_client':
       demo.clients = demo.clients.filter((c) => c.name !== name);
@@ -250,7 +260,11 @@ export async function request<T = Snapshot>(
       });
       return {
         action: name,
-        result: { preview: true, message: 'Sample action completed. No service was contacted.' },
+        result: {
+          preview: true,
+          exit_code: 0,
+          message: 'Sample action completed. No service was contacted.',
+        },
       } as T;
   }
   demo.actions = demo.actions.map((a) => ({

@@ -9,4 +9,5 @@ archive = shutil.make_archive(str(root / 'work' / 'keeper-agent-web'), 'zip',
 with zipfile.ZipFile(archive, 'a', compression=zipfile.ZIP_DEFLATED) as package:
     package.write(root / 'docs' / 'WEB.md', 'START-HERE.md')
     package.write(root / 'README.md', 'SECURITY-AND-CLI.md')
+    package.write(root / 'AGENT-USAGE.md', 'AGENT-USAGE.md')
 print(archive)

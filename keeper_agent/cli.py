@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import ipaddress
 import json
 import os
@@ -14,6 +15,7 @@ from urllib.parse import urlsplit
 
 from .policy import NAME, validate
 from .security import Denied, read_json, token_hash, write_private
+from .state import transaction
 
 
 def protect_directory(path):
@@ -77,11 +79,18 @@ def replace_private(path, value):
         tmp.unlink(missing_ok=True)
 
 
-def add_client(state, name, actions, out):
+def add_client(state, name, actions, out, expires_in=7 * 86400, temporary=False):
+    with transaction(state):
+        return _add_client(state, name, actions, out, expires_in, temporary)
+
+
+def _add_client(state, name, actions, out, expires_in, temporary):
     if not out.resolve().is_relative_to(state.resolve()):
         raise Denied("Generate the client inside private broker state, then transfer it to the agent account")
     if not NAME.fullmatch(name):
         raise Denied("Invalid client name")
+    if expires_in is not None and (type(expires_in) is not int or not 1 <= expires_in <= 365 * 86400):
+        raise Denied("Choose an access duration between one second and one year")
     policy = validate(read_json(state / "policy.json"))
     if not actions or set(actions) - policy["actions"].keys():
         raise Denied("Every granted action must exist in policy.json")
@@ -94,8 +103,40 @@ def add_client(state, name, actions, out):
                         "certificate": (state / "server.crt").read_text()})
     protect_directory(out)
     clients[name] = {"sha256": token_hash(token), "actions": sorted(set(actions))}
-    replace_private(state / "clients.json", clients)
+    if expires_in is not None:
+        import time
+        clients[name]["expiresAt"] = time.time() + expires_in
+    if temporary:
+        clients[name]["desktopTemporary"] = True
+    try:
+        replace_private(state / "clients.json", clients)
+    except Exception:
+        out.unlink(missing_ok=True)
+        raise
     print("Client written. Transfer only that file to the agent account; keep all broker state private.")
+
+
+def revoke_client(state, name, missing_ok=False):
+    with transaction(state):
+        clients = read_json(state / "clients.json")
+        if name not in clients and not missing_ok:
+            raise Denied("Unknown client")
+        revoked = clients.pop(name, None)
+        replace_private(state / "clients.json", clients)
+        # CLI output paths are configurable. A conventional filename may hold
+        # another client's token; prove ownership before removing that file.
+        if revoked and NAME.fullmatch(name):
+            generated = state / f"{name}-client.json"
+            if generated.is_symlink():
+                return
+            try:
+                config = read_json(generated)
+            except (OSError, ValueError):
+                return
+            token = config.get("token") if isinstance(config, dict) else None
+            digest = revoked.get("sha256")
+            if isinstance(token, str) and isinstance(digest, str) and hmac.compare_digest(token_hash(token), digest):
+                generated.unlink(missing_ok=True)
 
 
 def call_client(path, body):
@@ -108,12 +149,26 @@ def call_client(path, body):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_verify_locations(cadata=config["certificate"])
-    with httpx.Client(verify=context, trust_env=False, follow_redirects=False, timeout=330) as client:
-        response = client.post(config["url"], headers={"Authorization": f"Bearer {config['token']}"}, json=body)
-        value = response.json()
-        if response.status_code != 200:
-            raise Denied(value.get("error", "Broker rejected request"))
-        return value
+    try:
+        with httpx.Client(verify=context, trust_env=False, follow_redirects=False, timeout=330) as client:
+            response = client.post(config["url"], headers={"Authorization": f"Bearer {config['token']}"}, json=body)
+            value = response.json()
+            if response.status_code != 200:
+                raise Denied(value.get("error", "Broker rejected request"),
+                             value.get("code", "request_denied"), value.get("hint"))
+            return value
+    except httpx.ConnectError as error:
+        cause = error
+        while cause is not None:
+            if isinstance(cause, ssl.SSLCertVerificationError):
+                raise Denied("The broker certificate could not be verified.", "certificate_invalid",
+                             "Ask the administrator for a current client file. Keep TLS verification enabled.") from None
+            cause = cause.__cause__
+        raise Denied("The broker is offline or unreachable.", "broker_offline",
+                     "Ask the administrator to connect Keeper, then check status.") from None
+    except (httpx.TimeoutException, httpx.ReadError, httpx.RemoteProtocolError):
+        raise Denied("The broker response was interrupted. The action may have run.", "outcome_unknown",
+                     "Check Activity before repeating an action with side effects.") from None
 
 
 def main(argv=None):
@@ -134,13 +189,17 @@ def main(argv=None):
             command.add_argument("--name", required=True)
             command.add_argument("--allow", action="append", required=True)
             command.add_argument("--out", type=Path, required=True)
+            duration = command.add_mutually_exclusive_group()
+            duration.add_argument("--expires-in-hours", type=int, default=168)
+            duration.add_argument("--no-expiry", action="store_true", help="Allow access until revoked")
         elif name == "client-revoke":
             command.add_argument("--name", required=True)
     command = sub.add_parser("validate")
     command.add_argument("--policy", type=Path, required=True)
-    for name in ("list", "run"):
+    for name in ("list", "run", "status"):
         command = sub.add_parser(name)
         command.add_argument("--client", type=Path, required=True)
+        command.add_argument("--json", action="store_true", help="Return structured errors on stderr")
         if name == "run":
             command.add_argument("action")
     args = parser.parse_args(argv)
@@ -153,14 +212,10 @@ def main(argv=None):
             policy = validate(read_json(args.policy))
             print(f"Valid policy: {len(policy['actions'])} actions")
         elif args.command == "client-add":
-            add_client(args.state.resolve(), args.name, args.allow, args.out.resolve())
+            add_client(args.state.resolve(), args.name, args.allow, args.out.resolve(),
+                       expires_in=None if args.no_expiry else args.expires_in_hours * 3600)
         elif args.command == "client-revoke":
-            path = args.state / "clients.json"
-            clients = read_json(path)
-            if args.name not in clients:
-                raise Denied("Unknown client")
-            del clients[args.name]
-            replace_private(path, clients)
+            revoke_client(args.state, args.name)
             print("Client revoked for subsequent requests. Any already-running action may finish.")
         elif args.command == "doctor":
             policy = validate(read_json(args.state / "policy.json"))
@@ -181,18 +236,25 @@ def main(argv=None):
             provider = KeeperProvider(state / "keeper.json")
             serve(state, policy, provider)
         else:
-            body = {"operation": "list"} if args.command == "list" else {"operation": "run", "action": args.action}
-            print(json.dumps(call_client(args.client, body), indent=2))
+            body = ({"operation": args.command} if args.command in {"list", "status"}
+                    else {"operation": "run", "action": args.action})
+            value = call_client(args.client, body)
+            print(json.dumps(value, indent=2))
+            if args.command == "status" and not value.get("ready"):
+                return 1
         return 0
     except KeyboardInterrupt:
         print("Stopped.", file=sys.stderr)
         return 130
     except Denied as error:
-        print(str(error), file=sys.stderr)
+        print(json.dumps(error.payload()) if getattr(args, "json", False) else
+              str(error) + (f" {error.hint}" if error.hint else ""), file=sys.stderr)
         return 1
     except Exception:
         # Deliberately do not stringify upstream exceptions; they may carry secrets.
-        print("Operation failed. Check paths, installed dependencies, policy, and Keeper authentication.", file=sys.stderr)
+        message = "Operation failed. Check paths, installed dependencies, policy, and Keeper authentication."
+        print(json.dumps({"error": message, "code": "operation_failed"})
+              if getattr(args, "json", False) else message, file=sys.stderr)
         return 1
 
 
