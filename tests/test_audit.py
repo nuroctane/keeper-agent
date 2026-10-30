@@ -5,6 +5,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 import subprocess
+import traceback
+import sys
 
 from keeper_agent.audit import AuditLog, files, verify
 from keeper_agent.cli import main as cli_main
@@ -154,7 +156,9 @@ def test_serve_stops_on_request_logs_out_and_clears_status(tmp_path):
                               kwargs={"ready": ready, "stop": stop}, daemon=True)
     thread.start()
     thread.join(timeout=15)
-    assert not thread.is_alive()
+    if thread.is_alive():
+        frame = sys._current_frames().get(thread.ident)
+        raise AssertionError("Broker did not stop:\n" + "".join(traceback.format_stack(frame)))
     assert seen == [True]
     provider.close.assert_called_once()
     assert not (tmp_path / "broker-status.json").exists()

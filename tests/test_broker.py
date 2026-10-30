@@ -21,6 +21,15 @@ from keeper_agent.server import Broker, LocalServer, handler_for
 SECRET = "fixture-secret-ONLY-123!"
 
 
+def test_loopback_server_does_not_require_reverse_dns(monkeypatch):
+    def forbidden(*args):
+        raise AssertionError("loopback listener must not perform reverse DNS")
+    monkeypatch.setattr(socket, "getfqdn", forbidden)
+    with LocalServer(0, handler_for(None), ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)) as server:
+        assert server.server_name == "127.0.0.1"
+        assert server.server_port > 0
+
+
 class FakeProvider:
     def sync(self):
         pass

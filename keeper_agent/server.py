@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import json
 import socket
+import socketserver
 import ssl
 import threading
 import time
@@ -245,6 +246,13 @@ class LocalServer(ThreadingHTTPServer):
     # Concurrent connections keep the broker reachable while an action runs;
     # Broker.running still executes actions one at a time.
     daemon_threads = True
+
+    def server_bind(self):
+        # The listener is always loopback; avoid a reverse-DNS lookup during
+        # startup, which can block even though no hostname is needed.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "127.0.0.1"
+        self.server_port = self.server_address[1]
 
     def __init__(self, port, handler, tls):
         self.tls = tls
