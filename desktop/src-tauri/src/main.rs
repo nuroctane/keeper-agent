@@ -97,11 +97,19 @@ async fn desktop_request(
         .as_object_mut()
         .ok_or("Invalid request")?
         .insert("state".into(), json!(state_path(&app, &state)?));
+    run_helper(&app, request, &operation).await
+}
+
+async fn run_helper(
+    app: &tauri::AppHandle,
+    request: Value,
+    operation: &str,
+) -> Result<Value, String> {
     let input = serde_json::to_vec(&request).map_err(|_| "Invalid request")?;
     if input.len() > 1_048_576 {
         return Err("Request is too large".into());
     }
-    let (binary, args) = helper(&app)?;
+    let (binary, args) = helper(app)?;
     let mut command = tokio::process::Command::new(binary);
     command
         .args(args)
@@ -161,15 +169,22 @@ async fn desktop_request(
 }
 
 #[tauri::command]
-fn set_state_path(
+async fn set_state_path(
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
     path: PathBuf,
-) -> Result<(), String> {
+) -> Result<Value, String> {
+    let _guard = state.gate.lock().await;
     if !path.is_absolute() || !path.join("keeper.json").is_file() {
         return Err("Choose an initialized broker folder containing keeper.json".into());
     }
     let path = path.canonicalize().map_err(|_| "Folder unavailable")?;
+    let snapshot = run_helper(
+        &app,
+        json!({"operation": "snapshot", "state": path}),
+        "snapshot",
+    )
+    .await?;
     let prefs = Preferences {
         state_path: Some(path),
     };
@@ -187,7 +202,7 @@ fn set_state_path(
         .preferences
         .lock()
         .map_err(|_| "Settings unavailable")? = prefs;
-    Ok(())
+    Ok(snapshot)
 }
 
 /// PowerShell also ends single-quoted strings at typographic single quotes, so

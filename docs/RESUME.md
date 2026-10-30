@@ -2,7 +2,7 @@
 
 Updated October 29, 2026. Codex reviewed the recent Claude transcript for this repository before continuing development, as the owner requested. Use this file for the current handoff; October 8 package results remain historical.
 
-**Current local version: 0.3.2 plus subsequent bug fixes.** The verified 0.3.2 Windows packages predate those fixes and need rebuilding; source changes remain uncommitted and unpublished. Start with [the skill/product review](SKILL-REVIEW.md), root [AGENTS.md](../AGENTS.md), [validation](../VALIDATION.md) and [the 0.3.2 artifact manifest](RELEASE-0.3.2.md).
+**Current source: 0.3.2 plus subsequent bug fixes.** The fixes through `bc4e689` were pushed to `origin/main` and backed up. Later local work validates a native workspace before switching. The verified 0.3.2 Windows packages predate these fixes and need rebuilding. Start with [the skill/product review](SKILL-REVIEW.md), root [AGENTS.md](../AGENTS.md), [validation](../VALIDATION.md) and [the 0.3.2 artifact manifest](RELEASE-0.3.2.md).
 
 ## Source and completed work
 

@@ -273,17 +273,16 @@ export async function request<T = Snapshot>(
   }));
   return structuredClone(demo) as T;
 }
-export async function chooseState(): Promise<boolean> {
-  if (!native) return false;
+export async function chooseState(): Promise<Snapshot | null> {
+  if (!native) return null;
   const { open } = await import('@tauri-apps/plugin-dialog');
   const selected = await open({
     directory: true,
     multiple: false,
     title: 'Choose existing broker folder',
   });
-  if (!selected) return false;
-  await invoke('set_state_path', { path: selected });
-  return true;
+  if (!selected) return null;
+  return await invoke<Snapshot>('set_state_path', { path: selected });
 }
 export async function loginTerminal() {
   if (!native) {

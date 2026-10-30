@@ -290,8 +290,11 @@
       return;
     }
     await perform(async () => {
-      if (await chooseState()) await snapshotRefresh();
-      else if (preview) message = 'Folder selection is available in the desktop application.';
+      const snapshot = await chooseState();
+      if (snapshot) {
+        data = snapshot;
+        selected = data.actions[0]?.name || '';
+      } else if (preview) message = 'Folder selection is available in the desktop application.';
     });
   }
   async function selectFolder() {
