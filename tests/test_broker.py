@@ -1,9 +1,11 @@
 import base64
 import json
 import os
+import socket
 import ssl
 import sys
 import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -176,9 +178,17 @@ def test_real_tls_client_auth_run_and_revocation(tmp_path):
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         context.load_verify_locations(cadata=config["certificate"])
         with httpx.Client(verify=context, trust_env=False) as client:
-            assert client.post(config["url"], json={"operation": "list"}).status_code == 401
-            assert client.post(config["url"], json={"operation": "list"},
-                               headers={"Authorization": f"Bearer {token}", "Origin": "https://evil.invalid"}).status_code == 403
+            for _ in range(10):
+                assert client.post(config["url"], json={"operation": "list"}).status_code == 401
+                assert client.post(config["url"], json={"operation": "list"},
+                                   headers={"Authorization": f"Bearer {token}", "Origin": "https://evil.invalid"}).status_code == 403
+            with socket.create_connection(("127.0.0.1", server.server_port), timeout=3) as raw:
+                with context.wrap_socket(raw, server_hostname="127.0.0.1") as partial:
+                    partial.settimeout(3)
+                    start = time.monotonic()
+                    partial.sendall(b"POST /v1 HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 1024\r\nContent-Type: application/json\r\n\r\n{")
+                    assert b" 401 " in partial.recv(4096)
+                    assert time.monotonic() - start < 2
             broker.queue_timeout = 0.01
             for _ in range(broker.concurrency):
                 broker.slots.acquire()

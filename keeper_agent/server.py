@@ -182,9 +182,33 @@ def handler_for(broker):
             self.wfile.write(data)
             self.close_connection = True
 
+        def discard_rejected_body(self):
+            # Closing a TLS socket with an unread request body can reset the
+            # connection before the client receives the rejection. Only drain
+            # small, unambiguously framed bodies, with a short bounded wait.
+            lengths = self.headers.get_all("Content-Length", [])
+            if self.headers.get("Transfer-Encoding") or len(lengths) != 1:
+                return
+            try:
+                size = int(lengths[0])
+                if 0 < size <= 1024:
+                    deadline = time.monotonic() + 0.5
+                    try:
+                        while size and time.monotonic() < deadline:
+                            self.connection.settimeout(max(0.001, deadline - time.monotonic()))
+                            chunk = self.rfile.read1(size)
+                            if not chunk:
+                                break
+                            size -= len(chunk)
+                    finally:
+                        self.connection.settimeout(5)
+            except (OSError, ValueError):
+                pass
+
         def do_POST(self):
             try:
                 if self.path != "/v1" or self.headers.get("Origin") is not None:
+                    self.discard_rejected_body()
                     self.reply(403, {"error": "Request rejected"})
                     return
                 auth = self.headers.get("Authorization", "")
@@ -193,9 +217,11 @@ def handler_for(broker):
                         raise Denied("Unauthorized")
                     name, allowed = broker.authenticate(auth[7:])
                 except Denied as error:
+                    self.discard_rejected_body()
                     self.reply(401, error.payload())
                     return
                 except Exception:
+                    self.discard_rejected_body()
                     self.reply(401, {"error": "Unauthorized", "code": "unauthorized"})
                     return
                 if self.headers.get("Transfer-Encoding") or len(self.headers.get_all("Content-Length", [])) != 1:
@@ -284,12 +310,17 @@ def serve(state, policy, provider, ready=None, stop=None):
         broker.publish_status()
         print(f"Keeper Agent listening on https://127.0.0.1:{server.server_port}. Ctrl+C to lock.", flush=True)
         threading.Thread(target=watch, daemon=True).start()
-        if stop is not None:
-            threading.Thread(target=lambda: (stop.wait(), server.shutdown()), daemon=True).start()
         if ready:
             ready()
         try:
-            server.serve_forever()
+            if stop is None:
+                server.serve_forever()
+            else:
+                # A stop can arrive before serve_forever starts. Its internal
+                # shutdown flag is reset on entry, losing that early signal.
+                server.timeout = 0.5
+                while not stop.is_set():
+                    server.handle_request()
         finally:
             stopped.set()
             provider.close()

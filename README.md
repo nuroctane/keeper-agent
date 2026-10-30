@@ -24,7 +24,7 @@ Agent CLI → local HTTPS + scoped client token → private broker → Keeper Co
 - Separate per-client action grants; token hashes stored by broker; immediate revocation for subsequent requests; TLS certificate pinned by client; loopback-only listener.
 - Metadata audit log for started/completed/failed permitted actions; no credentials, request payloads, or operation output in audit logs. Entries are hash-chained and the log rotates at 8 MiB; `keeper-agent audit-verify --state <dir>` reports the first edited, inserted or missing entry. The chain cannot detect removal of the newest entries, or a rewrite of the whole log by the broker account.
 
-This is a working first version, not an independently audited password-management product. Automated tests use synthetic secrets. Your Keeper authentication and your real sites still need local setup and verification.
+This is a working first version, not an independently audited password-management product. Automated tests use synthetic secrets. Your Keeper authentication and your real sites still need local setup and verification. See the [feature map](docs/FEATURE-MAP.md) for the complete workflow, implemented capabilities and remaining gaps.
 
 ## The security boundary
 

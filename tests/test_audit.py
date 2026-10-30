@@ -1,6 +1,7 @@
 import io
 import json
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 import subprocess
@@ -145,9 +146,12 @@ def test_serve_stops_on_request_logs_out_and_clears_status(tmp_path):
     def ready():
         seen.append((tmp_path / "broker-status.json").exists())
         stop.set()
+        # Give the stop watcher a chance to run before the serving loop starts.
+        # The old serve_forever/shutdown combination could lose that signal.
+        time.sleep(0.1)
 
     thread = threading.Thread(target=serve, args=(tmp_path, policy(command(tmp_path, "print(1)")), provider),
-                              kwargs={"ready": ready, "stop": stop})
+                              kwargs={"ready": ready, "stop": stop}, daemon=True)
     thread.start()
     thread.join(timeout=15)
     assert not thread.is_alive()
