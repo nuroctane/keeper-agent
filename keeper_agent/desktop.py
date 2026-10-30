@@ -231,7 +231,43 @@ def _dispatch(request):
     raise Denied("Unsupported desktop operation")
 
 
+def handle_request(raw):
+    try:
+        if len(raw) > 1048576:
+            raise Denied("Request is too large")
+        result = dispatch(json.loads(raw))
+        return {"ok": True, "data": result}
+    except Denied as error:
+        return {"ok": False, **error.payload()}
+    except Exception:
+        return {"ok": False, "error": "Could not complete the request. Check broker configuration and permissions."}
+
+
+def stdio_worker():
+    # The parent sends one bounded JSON request per line. EOF also makes the
+    # helper exit when its owning desktop process goes away.
+    while True:
+        raw = sys.stdin.buffer.readline(1048578)
+        if not raw:
+            return 0
+        if len(raw) > 1048577 or (len(raw) == 1048577 and not raw.endswith(b"\n")):
+            while raw and not raw.endswith(b"\n"):
+                raw = sys.stdin.buffer.readline(65536)
+            payload = {"ok": False, "error": "Request is too large"}
+        else:
+            payload = handle_request(raw.rstrip(b"\n"))
+        encoded = json.dumps(payload).encode("utf-8")
+        if len(encoded) > 1048576:
+            payload = {"ok": False, "error": "Response was too large; an action may have run.",
+                       "code": "outcome_unknown", "hint": "Check the destination before repeating an action."}
+            encoded = json.dumps(payload).encode("utf-8")
+        sys.stdout.buffer.write(encoded + b"\n")
+        sys.stdout.buffer.flush()
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "--stdio-worker":
+        return stdio_worker()
     if len(sys.argv) > 1 and sys.argv[1] == "web-worker":
         from .web_worker import main as worker_main
         return worker_main(sys.argv[2:])
@@ -247,16 +283,7 @@ def main():
             "list", "run", "status", "--help", "-h"}:
         from .cli import main as cli_main
         return cli_main(sys.argv[1:])
-    try:
-        raw = sys.stdin.buffer.read(1048577)
-        if len(raw) > 1048576:
-            raise Denied("Request is too large")
-        result = dispatch(json.loads(raw))
-        payload = {"ok": True, "data": result}
-    except Denied as error:
-        payload = {"ok": False, **error.payload()}
-    except Exception:
-        payload = {"ok": False, "error": "Could not complete the request. Check broker configuration and permissions."}
+    payload = handle_request(sys.stdin.buffer.read(1048577))
     sys.stdout.write(json.dumps(payload))
     return 0 if payload["ok"] else 1
 

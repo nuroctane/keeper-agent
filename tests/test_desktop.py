@@ -193,3 +193,37 @@ def test_literal_credentials_under_other_names_rejected(state, tmp_path, headers
         a = {**action(tmp_path), "env": env}
     with pytest.raises(Denied, match="Keeper reference"):
         req(state, "save_action", name="bad", action=a)
+
+
+def test_stdio_worker_handles_multiple_requests_and_exits_on_eof(state):
+    import subprocess
+    worker = subprocess.Popen([sys.executable, '-m', 'keeper_agent.desktop', '--stdio-worker'],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        def send(raw):
+            worker.stdin.write(raw + b'\n')
+            worker.stdin.flush()
+            return json.loads(worker.stdout.readline())
+        first = send(json.dumps({'operation': 'snapshot', 'state': str(state)}).encode())
+        assert first['ok'] and first['data']['initialized']
+        created = send(json.dumps({'operation': 'save_action', 'state': str(state), 'name': 'check',
+                                   'action': {'kind': 'http', 'url': 'https://example.invalid'}}).encode())
+        assert created['ok'] and created['data']['actions'][0]['name'] == 'check'
+        grant = send(json.dumps({'operation': 'create_client', 'state': str(state), 'name': 'agent',
+                                 'actions': ['check']}).encode())
+        assert grant['ok'] and Path(grant['data']['path']).exists()
+        revoked = send(json.dumps({'operation': 'revoke_client', 'state': str(state), 'name': 'agent'}).encode())
+        assert revoked['ok'] and revoked['data']['clients'] == []
+        assert not send(b'{invalid json')['ok']
+        too_large = send(b'x' * 1048577)
+        assert not too_large['ok'] and too_large['error'] == 'Request is too large'
+        second = send(json.dumps({'operation': 'snapshot', 'state': str(state)}).encode())
+        assert second['ok'] and second['data']['statePath'] == str(state)
+        worker.stdin.close()
+        assert worker.wait(timeout=10) == 0
+    finally:
+        if worker.poll() is None:
+            worker.kill()
+            worker.wait(timeout=5)
+        worker.stdout.close()
+        worker.stderr.close()

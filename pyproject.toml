@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keeper-agent-local"
-version = "0.3.2"
+version = "0.3.3"
 description = "Policy-controlled local broker for a Keeper Personal vault"
 requires-python = ">=3.11"
 dependencies = ["httpx>=0.28,<0.29", "certifi>=2026.10.19", "cryptography>=46", "pyotp>=2.9,<3", "psutil>=7,<8"]

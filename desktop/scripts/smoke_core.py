@@ -1,9 +1,11 @@
 """Exercise a packaged helper without contacting Keeper or any external service."""
 import argparse
 import json
+import queue
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import time
 
 parser = argparse.ArgumentParser()
@@ -49,5 +51,22 @@ for command in ("status", "list", "run"):
 failure = subprocess.run([str(core), "status", "--client", str(state / "missing.json"), "--json"],
                          capture_output=True, text=True, timeout=30)
 assert failure.returncode == 1 and json.loads(failure.stderr)["code"] == "operation_failed"
+worker = subprocess.Popen([str(core), "--stdio-worker"], stdin=subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+try:
+    for _ in range(2):
+        worker.stdin.write(json.dumps({"operation": "snapshot", "state": str(state)}) + "\n")
+        worker.stdin.flush()
+        lines = queue.Queue(maxsize=1)
+        threading.Thread(target=lambda: lines.put(worker.stdout.readline()), daemon=True).start()
+        assert json.loads(lines.get(timeout=30))["ok"]
+    worker.stdin.close()
+    assert worker.wait(timeout=30) == 0
+finally:
+    if worker.poll() is None:
+        worker.kill()
+        worker.wait(timeout=5)
+    worker.stdout.close()
+    worker.stderr.close()
 print(json.dumps({"passed": True, "initialSnapshotSeconds": round(first, 3),
     "repeatSnapshotSeconds": round(warm, 3), "syntheticState": str(state)}))

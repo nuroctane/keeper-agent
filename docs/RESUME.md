@@ -1,8 +1,8 @@
 # Resume Keeper Agent
 
-Updated October 29, 2026. Codex reviewed the recent Claude transcript for this repository before continuing development, as the owner requested. Use this file for the current handoff; October 8 package results remain historical.
+Updated October 30, 2026. Codex reviewed the recent Claude transcript for this repository before continuing development, as the owner requested. Use this file for the current handoff; earlier package results remain historical.
 
-**Current source: 0.3.2 plus subsequent bug fixes.** The fixes through `bc4e689` were pushed to `origin/main` and backed up. Later local work validates a native workspace before switching. The verified 0.3.2 Windows packages predate these fixes and need rebuilding. Start with [the skill/product review](SKILL-REVIEW.md), root [AGENTS.md](../AGENTS.md), [validation](../VALIDATION.md) and [the 0.3.2 artifact manifest](RELEASE-0.3.2.md).
+**Current local source: 0.3.3.** A persistent native helper removes repeated process startup from desktop requests. The Windows helper, web host and installer were built and verified locally; these changes remain uncommitted and unpublished. Start with [the skill/product review](SKILL-REVIEW.md), root [AGENTS.md](../AGENTS.md), [validation](../VALIDATION.md) and [the 0.3.3 artifact manifest](RELEASE-0.3.3.md).
 
 ## Source and completed work
 
@@ -25,7 +25,7 @@ Codex added regression tests and fixes for two further gaps:
 - Refuse duplicate legacy custom-field labels and typed fields containing multiple values. Commander's convenience getters otherwise select the first value.
 - Keep rotated audit filenames ordered when the system clock repeats or moves backward, including after a restart. Entry timestamps still record the actual clock time; filenames preserve chain order.
 
-These changes are local until committed and shipped. See [VALIDATION.md](../VALIDATION.md) for the current checks.
+Those earlier changes were committed and shipped. See [VALIDATION.md](../VALIDATION.md) for the current checks.
 
 The owner then approved the next improvement batch, emphasizing UX simplicity. Version 0.3.1 introduced:
 
@@ -40,7 +40,7 @@ Source validation: 97 backend tests, six desktop-preview UI tests and three auth
 
 The owner requested a deep review of the skill libraries with `.nur` preferred over mirrors. See [SKILL-REVIEW.md](SKILL-REVIEW.md) and root [AGENTS.md](../AGENTS.md) for routing, findings, fixes and the ordered roadmap. Validation with patched dependencies is now 100 backend tests plus six desktop and three web UI tests, frozen-helper/web-host smoke checks and verified Windows packaging. The Python dependency audit is clean; one unpatched low-severity npm build-tool advisory remains. See [the 0.3.2 manifest](RELEASE-0.3.2.md) for exact files and checksums.
 
-Use [WEB.md](WEB.md) for web-host startup and authentication, or [DESKTOP.md](DESKTOP.md) for the native app. The verified [0.3.2 Windows builds](RELEASE-0.3.2.md) predate the latest bug fixes; rebuild them before distributing current code. The [0.3.1 manifest](RELEASE-0.3.1.md) and [0.3 manifest](RELEASE-0.3.0.md) describe historical packages that lack the latest fixes. Their local files and checksums remain unchanged.
+Use [WEB.md](WEB.md) for web-host startup and authentication, or [DESKTOP.md](DESKTOP.md) for the native app. The [0.3.3 Windows builds](RELEASE-0.3.3.md) include the current local changes. Earlier manifests describe historical packages that lack the latest fixes. Their local files and checksums remain unchanged.
 
 Claude last reported no running admin or broker and an initialized workspace without actions or agent grants at `%LOCALAPPDATA%\dev.nuroctane.keeper-agent\broker`. That is a historical observation, not a live health check. Check current listeners before starting or restarting a service.
 
@@ -54,7 +54,7 @@ That folder contains `admin-access.key`. Its contents must remain private and ou
 
 ## Remaining work
 
-1. Rebuild and verify macOS 0.3.2 packages on a Mac/CI before describing them as current. Keep historical release checksums intact. Changes are still uncommitted and unpublished.
+1. Build and verify macOS 0.3.3 packages on a Mac/CI before describing them as current. Keep historical release checksums intact. The 0.3.3 changes are still uncommitted and unpublished.
 2. Follow the prioritized roadmap in [SKILL-REVIEW.md](SKILL-REVIEW.md): approved action revisions, a local MCP adapter, durable execution receipts and measured scheduling improvements. A ten-second execution-slot queue bound is already implemented; fairness and receipts are not. Preserve policy fail-closed behavior, queued revocation checks, vault-refresh freshness, bounded outputs and metadata-only auditing.
 3. Verify the real Keeper login and one narrowly scoped target action with the owner. Tests use synthetic secrets; they do not establish real-account or real-site behavior. Never send master passwords, MFA codes or administrator keys into chat.
 4. Provision and validate separate broker and agent OS accounts before relying on the README's isolation boundary.

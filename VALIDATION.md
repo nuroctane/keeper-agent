@@ -1,5 +1,13 @@
 # Validation
 
+## Desktop helper performance — October 30, 2026
+
+- Native desktop requests now share a bounded local stdio helper. It exits on parent-pipe EOF; a failed, timed-out or canceled request discards the helper. An interrupted action is never automatically retried. Subsequent requests can start a fresh helper.
+- On this Windows host with a two-core, BelowNormal CPU cap, an offline synthetic workspace with 20 actions, 10 clients and 200 activity events had a **885.55 ms median** over eight source-helper subprocess snapshots before this change. The new persistent source helper had a **5.19 ms median** over twelve warmed requests, with a 437.35 ms first request. These are separate small samples on one machine, not native UI, live Keeper, or cross-platform benchmarks.
+- 106 backend tests passed including synthetic real Chromium, and two Rust unit tests passed. The new tests exercise multiple worker requests, grants and revocation, malformed and oversized input, EOF, process reuse, cancellation and crash handling.
+- The freshly frozen 0.3.3 helper and web host pass their smoke tests, including repeated worker requests. On the same synthetic fixture and CPU cap, the frozen worker's median was 5.31 ms across twelve warmed requests; its first request took 551.85 ms. Its process RSS was 39.03 MiB at one idle observation after those requests. These figures are not native UI, live vault, cross-platform or memory-peak measurements.
+- The Windows installer passed its archive integrity check; its extracted helper matches the smoke-tested helper, and all four extracted web assets match the final frontend build. The standalone ZIP passed its CRC test. Checksums and limitations are in [the 0.3.3 manifest](docs/RELEASE-0.3.3.md).
+
 ## Skill review and hardening 0.3.2 — October 29, 2026
 
 - **100 backend tests passed** with the updated dependencies and opt-in real Chromium test, in 77.29 seconds. New regressions cover client-file ownership during revocation, bounded execution-slot waiting and activity history across rotated logs; the real TLS test checks HTTP 503 and `queue_timeout`.

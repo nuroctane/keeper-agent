@@ -6,7 +6,8 @@ use serde_json::{json, Value};
 use std::path::Path;
 use std::{path::PathBuf, process::Stdio, sync::Mutex, time::Duration};
 use tauri::{Manager, State};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout};
 
 #[derive(Default, Serialize, Deserialize, Clone)]
 struct Preferences {
@@ -15,6 +16,13 @@ struct Preferences {
 struct DesktopState {
     preferences: Mutex<Preferences>,
     gate: tokio::sync::Mutex<()>,
+    worker: tokio::sync::Mutex<Option<HelperWorker>>,
+}
+
+struct HelperWorker {
+    _child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
 }
 
 fn state_path(app: &tauri::AppHandle, state: &DesktopState) -> Result<PathBuf, String> {
@@ -97,11 +105,12 @@ async fn desktop_request(
         .as_object_mut()
         .ok_or("Invalid request")?
         .insert("state".into(), json!(state_path(&app, &state)?));
-    run_helper(&app, request, &operation).await
+    run_helper(&app, &state, request, &operation).await
 }
 
 async fn run_helper(
     app: &tauri::AppHandle,
+    state: &DesktopState,
     request: Value,
     operation: &str,
 ) -> Result<Value, String> {
@@ -109,63 +118,125 @@ async fn run_helper(
     if input.len() > 1_048_576 {
         return Err("Request is too large".into());
     }
-    let (binary, args) = helper(app)?;
-    let mut command = tokio::process::Command::new(binary);
-    command
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(debug_assertions)]
-    command.current_dir(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .unwrap(),
-    );
-    #[cfg(windows)]
-    command.creation_flags(0x08000000);
-    let mut child = command
-        .spawn()
-        .map_err(|_| "Could not start the broker runtime")?;
+    let mut worker_slot = state.worker.lock().await;
+    if let Some(worker) = worker_slot.as_mut() {
+        if worker
+            ._child
+            .try_wait()
+            .map_err(|_| "Runtime status unavailable")?
+            .is_some()
+        {
+            *worker_slot = None;
+        }
+    }
+    if worker_slot.is_none() {
+        let (binary, args) = helper(app)?;
+        let mut command = tokio::process::Command::new(binary);
+        command
+            .args(args)
+            .arg("--stdio-worker")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        #[cfg(debug_assertions)]
+        command.current_dir(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(Path::parent)
+                .unwrap(),
+        );
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+        let mut child = command
+            .spawn()
+            .map_err(|_| "Could not start the broker runtime")?;
+        let stdin = child.stdin.take().ok_or("Runtime input unavailable")?;
+        let stdout = child.stdout.take().ok_or("Runtime output unavailable")?;
+        *worker_slot = Some(HelperWorker {
+            _child: child,
+            stdin,
+            stdout: BufReader::new(stdout),
+        });
+    }
+    exchange_worker(
+        &mut worker_slot,
+        &input,
+        operation,
+        Duration::from_secs(345),
+    )
+    .await
+}
+
+async fn exchange_worker(
+    worker_slot: &mut Option<HelperWorker>,
+    input: &[u8],
+    operation: &str,
+    timeout: Duration,
+) -> Result<Value, String> {
+    // Own the worker while a request is in flight. If this future is
+    // canceled, dropping it kills the child instead of leaving a stale reply
+    // in the shared pipe for a later request.
+    let mut worker = worker_slot.take().ok_or("Runtime unavailable")?;
     let task = async {
-        let mut stdin = child.stdin.take().ok_or("Runtime input unavailable")?;
-        stdin
+        worker
+            .stdin
             .write_all(&input)
             .await
             .map_err(|_| "Runtime input failed")?;
-        drop(stdin);
-        let stdout = child.stdout.take().ok_or("Runtime output unavailable")?;
+        worker
+            .stdin
+            .write_all(b"\n")
+            .await
+            .map_err(|_| "Runtime input failed")?;
+        worker
+            .stdin
+            .flush()
+            .await
+            .map_err(|_| "Runtime input failed")?;
         let mut output = Vec::new();
-        stdout
-            .take(1_048_577)
-            .read_to_end(&mut output)
+        (&mut worker.stdout)
+            .take(1_048_578)
+            .read_until(b'\n', &mut output)
             .await
             .map_err(|_| "Runtime output failed")?;
-        if output.len() > 1_048_576 {
+        if output.is_empty() {
+            return Err("Broker runtime stopped unexpectedly".to_string());
+        }
+        if output.len() > 1_048_577 || !output.ends_with(b"\n") {
             return Err("Runtime output exceeded limit".to_string());
         }
-        child.wait().await.map_err(|_| "Runtime failed")?;
         let response: Value =
             serde_json::from_slice(&output).map_err(|_| "Runtime returned an invalid response")?;
-        if response.get("ok") == Some(&Value::Bool(true)) {
-            Ok(response["data"].clone())
-        } else {
-            let error = response["error"].as_str().unwrap_or("Operation failed");
-            let hint = response["hint"].as_str().unwrap_or("");
-            Err(if hint.is_empty() {
-                error.to_owned()
+        Ok(response)
+    };
+    let response = match tokio::time::timeout(timeout, task).await {
+        Ok(Ok(response)) => response,
+        failure => {
+            // Never retry: the helper may already have executed an action.
+            let error = match failure {
+                Ok(Err(error)) => error,
+                _ => "Operation timed out".to_string(),
+            };
+            return Err(if operation == "run" {
+                format!("{error}. The action may have run; check the destination before repeating.")
             } else {
-                format!("{error} {hint}")
-            })
+                error
+            });
         }
     };
-    tokio::time::timeout(Duration::from_secs(345), task)
-        .await
-        .map_err(|_| if operation == "run" {
-            "Operation timed out. The action may have run; check the destination before repeating.".to_string()
-        } else { "Operation timed out".to_string() })?
+    *worker_slot = Some(worker);
+    if response.get("ok") == Some(&Value::Bool(true)) {
+        Ok(response["data"].clone())
+    } else {
+        let error = response["error"].as_str().unwrap_or("Operation failed");
+        let hint = response["hint"].as_str().unwrap_or("");
+        Err(if hint.is_empty() {
+            error.to_owned()
+        } else {
+            format!("{error} {hint}")
+        })
+    }
 }
 
 #[tauri::command]
@@ -181,6 +252,7 @@ async fn set_state_path(
     let path = path.canonicalize().map_err(|_| "Folder unavailable")?;
     let snapshot = run_helper(
         &app,
+        &state,
         json!({"operation": "snapshot", "state": path}),
         "snapshot",
     )
@@ -223,7 +295,91 @@ fn powershell_quote(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::powershell_quote;
+    use super::{exchange_worker, powershell_quote, HelperWorker};
+    use std::{path::Path, process::Stdio, time::Duration};
+    use tokio::io::BufReader;
+
+    async fn fake_worker() -> HelperWorker {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let local = root.join(if cfg!(windows) {
+            ".venv/Scripts/python.exe"
+        } else {
+            ".venv/bin/python"
+        });
+        let python = if local.is_file() {
+            local
+        } else {
+            "python".into()
+        };
+        let script = "import json,sys,time\nfor line in sys.stdin:\n r=json.loads(line)\n if r.get('operation')=='pause': time.sleep(30)\n if r.get('operation')=='crash': sys.exit(1)\n print(json.dumps({'ok':True,'data':r}),flush=True)";
+        let mut command = tokio::process::Command::new(python);
+        command
+            .args(["-u", "-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000);
+        let mut child = command.spawn().unwrap();
+        HelperWorker {
+            stdin: child.stdin.take().unwrap(),
+            stdout: BufReader::new(child.stdout.take().unwrap()),
+            _child: child,
+        }
+    }
+
+    #[test]
+    fn worker_reuses_process_and_discards_it_on_cancellation_or_failure() {
+        tauri::async_runtime::block_on(async {
+            let mut slot = Some(fake_worker().await);
+            let pid = slot.as_ref().unwrap()._child.id();
+            for name in ["first", "second"] {
+                let input = format!("{{\"name\":\"{name}\"}}");
+                let result = exchange_worker(
+                    &mut slot,
+                    input.as_bytes(),
+                    "snapshot",
+                    Duration::from_secs(10),
+                )
+                .await
+                .unwrap();
+                assert_eq!(result["name"], name);
+                assert_eq!(slot.as_ref().unwrap()._child.id(), pid);
+            }
+            let canceled = tokio::time::timeout(
+                Duration::from_millis(100),
+                exchange_worker(
+                    &mut slot,
+                    br#"{"operation":"pause"}"#,
+                    "run",
+                    Duration::from_secs(10),
+                ),
+            )
+            .await;
+            assert!(canceled.is_err());
+            assert!(
+                slot.is_none(),
+                "a canceled request must not leave a stale worker response"
+            );
+
+            slot = Some(fake_worker().await);
+            let error = exchange_worker(
+                &mut slot,
+                br#"{"operation":"crash"}"#,
+                "run",
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("may have run"));
+            assert!(slot.is_none(), "a failed worker must not be reused");
+        });
+    }
 
     #[test]
     fn powershell_quote_doubles_every_single_quote_form() {
@@ -334,6 +490,7 @@ fn main() {
             app.manage(DesktopState {
                 preferences: Mutex::new(prefs),
                 gate: tokio::sync::Mutex::new(()),
+                worker: tokio::sync::Mutex::new(None),
             });
             Ok(())
         })
